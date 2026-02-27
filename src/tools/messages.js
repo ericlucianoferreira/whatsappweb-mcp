@@ -488,8 +488,16 @@ export function registerMessageTools(server) {
 
         // 3. Transcrever com Whisper via Python
         const transcript = await new Promise((resolve, reject) => {
+          // Localizar ffmpeg — pode estar em ~/ffmpeg ou no PATH
+          const ffmpegCandidates = [
+            path.join(os.homedir(), "ffmpeg", "ffmpeg-master-latest-win64-gpl", "bin"),
+            path.join(os.homedir(), "ffmpeg", "bin"),
+          ];
+          const ffmpegPath = ffmpegCandidates.find(p => fs.existsSync(path.join(p, "ffmpeg.exe"))) || "";
+
           const pythonScript = `
-import whisper, sys, json
+import whisper, sys, os
+${ffmpegPath ? `os.environ["PATH"] = r"${ffmpegPath}" + os.pathsep + os.environ.get("PATH", "")` : ""}
 model = whisper.load_model("base")
 result = model.transcribe(sys.argv[1], language="${language}")
 print(result["text"].strip())
