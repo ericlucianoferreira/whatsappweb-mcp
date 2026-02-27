@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "WhatsApp MCP Bridge",
-  "version": "1.0.0",
-  "description": "Ponte entre WhatsApp Web e Claude Code via MCP",
+  "name": "Jarvis WP",
+  "version": "2.0.0",
+  "description": "Ponte entre WhatsApp Web e Jarvis (Claude Code) — desenvolvido pela Expert Integrado",
   "minimum_chrome_version": "116",
   "permissions": ["storage", "scripting", "alarms"],
   "host_permissions": ["https://web.whatsapp.com/*"],
