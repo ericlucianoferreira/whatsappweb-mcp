@@ -24,20 +24,38 @@ export function registerMessageTools(server) {
   // ─── list_messages ─────────────────────────────────────────────────────────
   server.tool(
     "whatsapp_list_messages",
-    "Lista mensagens recentes de um chat do WhatsApp. CUIDADO: abrir mensagens de um chat pode marcá-las como lidas (blue ticks). Para ver não lidas sem risco, use whatsapp_get_unread_chats primeiro.",
+    "Lista mensagens de um chat do WhatsApp. " +
+    "Com unread_only=true: retorna SOMENTE as mensagens não lidas (padrão — usar quando o usuário pedir para ler um chat). " +
+    "Com unread_only=false: retorna as N mensagens mais recentes (usar apenas quando usuário pedir contexto/histórico). " +
+    "CUIDADO: abrir mensagens pode marcá-las como lidas (blue ticks).",
     {
       chat_id: z.string().describe("ID do chat"),
-      limit: z.number().optional().default(30).describe("Quantidade de mensagens (padrão 30, máx 50)"),
+      limit: z.number().optional().default(30).describe("Quantidade de mensagens (padrão 30, máx 50). Ignorado quando unread_only=true."),
+      unread_only: z.boolean().optional().default(true).describe("true (padrão) = somente não lidas. false = N mensagens mais recentes (histórico/contexto)."),
     },
-    async ({ chat_id, limit }) => {
+    async ({ chat_id, limit, unread_only }) => {
       try {
-        const result = await sendCommand("GET_MESSAGES", {
-          chatId: chat_id,
-          limit: Math.min(limit, 50),
-        });
+        let result;
+
+        if (unread_only !== false) {
+          // Buscar apenas mensagens não lidas
+          result = await sendCommand("GET_UNREAD_DETAIL", {
+            chatId: chat_id,
+            limit: 50,
+          });
+        } else {
+          // Buscar N mensagens mais recentes (histórico)
+          result = await sendCommand("GET_MESSAGES", {
+            chatId: chat_id,
+            limit: Math.min(limit, 50),
+          });
+        }
 
         if (!result.messages || result.messages.length === 0) {
-          return { content: [{ type: "text", text: "Nenhuma mensagem encontrada." }] };
+          const msg = unread_only !== false
+            ? "Nenhuma mensagem não lida neste chat."
+            : "Nenhuma mensagem encontrada.";
+          return { content: [{ type: "text", text: msg }] };
         }
 
         const formatted = result.messages.map((m) => ({
@@ -49,6 +67,25 @@ export function registerMessageTools(server) {
           type: m.type || "chat",
           hasMedia: m.hasMedia || false,
         }));
+
+        // Modo não lidas: marcar de volta como não lido automaticamente
+        // Só sai desse estado se o usuário responder, ou disser explicitamente para ignorar
+        if (unread_only !== false) {
+          try {
+            await sendCommand("MARK_AS_UNREAD", { chatId: chat_id });
+          } catch {}
+
+          return {
+            content: [{
+              type: "text",
+              text: `${formatted.length} mensagem(ns) não lida(s):\n\n${JSON.stringify(formatted, null, 2)}\n\n` +
+                `⚠️ Chat mantido como NÃO LIDO. Use whatsapp_resolve_chat para decidir:\n` +
+                `- "reply" + message: responder e marcar como lido\n` +
+                `- "ignore": marcar como lido sem responder\n` +
+                `- "keep_unread": manter não lido`
+            }],
+          };
+        }
 
         return {
           content: [{
@@ -498,7 +535,7 @@ export function registerMessageTools(server) {
           const pythonScript = `
 import whisper, sys, os
 ${ffmpegPath ? `os.environ["PATH"] = r"${ffmpegPath}" + os.pathsep + os.environ.get("PATH", "")` : ""}
-model = whisper.load_model("base")
+model = whisper.load_model("medium")
 result = model.transcribe(sys.argv[1], language="${language}")
 print(result["text"].strip())
 `.trim();

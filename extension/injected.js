@@ -259,17 +259,14 @@
     DOWNLOAD_MEDIA: async (payload) => {
       const { msgId, chatId } = payload;
 
-      // O sufixo do msgId (ex: "2A33A87E65E3FE724FF9") é o id único da mensagem no store
-      const msgSuffix = msgId.split("_").pop();
-
       // Forçar carregamento das mensagens do chat no store
       await WPP.chat.getMessages(chatId, { count: 50 });
 
-      // Buscar objeto NATIVO no MsgStore — downloadMedia exige o objeto nativo, não o formatado
+      // Buscar objeto NATIVO no MsgStore pelo _serialized exato
       const allMsgs = WPP.whatsapp.MsgStore.getModelsArray();
       const nativeMsg = allMsgs.find((m) => {
         const serial = m.id?._serialized || "";
-        return serial === msgId || serial.endsWith(msgSuffix);
+        return serial === msgId;
       });
 
       if (!nativeMsg) throw new Error(`Mensagem não encontrada no store: ${msgId}`);
@@ -277,13 +274,21 @@
         throw new Error(`Mensagem não contém mídia (type: chat)`);
       }
 
-      const media = await WPP.chat.downloadMedia(nativeMsg);
-      if (!media) throw new Error("Falha ao baixar mídia — arquivo pode ter expirado.");
+      // WPP.chat.downloadMedia(string) → Promise<Blob>
+      const blob = await WPP.chat.downloadMedia(msgId);
+      if (!blob) throw new Error("Falha ao baixar mídia — arquivo pode ter expirado.");
+
+      // Converter Blob para base64
+      const arrayBuffer = await blob.arrayBuffer();
+      const uint8 = new Uint8Array(arrayBuffer);
+      let binary = "";
+      for (let i = 0; i < uint8.length; i++) binary += String.fromCharCode(uint8[i]);
+      const base64 = btoa(binary);
 
       return {
-        data: media.data,
-        mimetype: media.mimetype || nativeMsg.mimetype || "application/octet-stream",
-        filename: media.filename || nativeMsg.filename || `media_${Date.now()}`,
+        data: base64,
+        mimetype: blob.type || nativeMsg.mimetype || "application/octet-stream",
+        filename: nativeMsg.filename || `media_${Date.now()}`,
         type: nativeMsg.type,
         caption: nativeMsg.caption || nativeMsg.body || "",
       };
