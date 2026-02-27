@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Jarvis WP",
+  "name": "Jarvis WA",
   "version": "2.0.0",
   "description": "Ponte entre WhatsApp Web e Jarvis (Claude Code) — desenvolvido pela Expert Integrado",
   "minimum_chrome_version": "116",
