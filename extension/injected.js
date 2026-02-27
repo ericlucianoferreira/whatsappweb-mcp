@@ -273,7 +273,20 @@
         throw new Error(`Mensagem não contém mídia (type: ${msg.type})`);
       }
 
-      const media = await WPP.chat.downloadMedia(msg);
+      // downloadMedia aceita o objeto msg completo do store interno do WA
+      // Para @lid, buscar diretamente pelo store de mensagens
+      let media;
+      try {
+        media = await WPP.chat.downloadMedia(msg);
+      } catch (e) {
+        // Fallback: tentar via ID serializado
+        const msgObj = WPP.whatsapp.MsgStore.get(msg.id);
+        if (msgObj) {
+          media = await WPP.chat.downloadMedia(msgObj);
+        } else {
+          throw e;
+        }
+      }
       if (!media) throw new Error("Falha ao baixar mídia — arquivo pode ter expirado.");
 
       return {
