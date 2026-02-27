@@ -186,7 +186,11 @@
       // wa-js 3.22.0 corrige os dois bugs (Invalid WID + openChatBottom)
       await WPP.chat.openChatBottom(chatId);
       await new Promise((r) => setTimeout(r, 400));
-      const result = await WPP.chat.sendTextMessage(chatId, text);
+
+      const opts = {};
+      if (payload.quotedMsgId) opts.quotedMsg = payload.quotedMsgId;
+
+      const result = await WPP.chat.sendTextMessage(chatId, text, opts);
       return { sent: true, id: safeWid(result?.id) || "" };
     },
 

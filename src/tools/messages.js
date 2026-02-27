@@ -112,11 +112,12 @@ export function registerMessageTools(server) {
     {
       chat_id: z.string().describe("ID do chat destino (ex: 5511999999999@c.us)"),
       message: z.string().describe("Texto da mensagem"),
+      reply_to_msg_id: z.string().optional().describe("ID da mensagem a citar/responder (campo 'id' retornado por list_messages). Quando informado, a mensagem é enviada como reply com a citação da mensagem original."),
       confirmed: z.boolean().optional().default(false).describe(
         "false (padrão) = mostrar preview. true = confirmar e enviar após 10s de janela de cancelamento."
       ),
     },
-    async ({ chat_id, message, confirmed }) => {
+    async ({ chat_id, message, reply_to_msg_id, confirmed }) => {
       try {
         // Validações que rodam sempre (antes do preview)
         checkMessageLength(message, confirmed);
@@ -130,6 +131,7 @@ export function registerMessageTools(server) {
               type: "text",
               text: `📋 PREVIEW — mensagem NÃO enviada ainda.\n\n` +
                 `Para: ${chat_id}\n` +
+                (reply_to_msg_id ? `Respondendo: ${reply_to_msg_id}\n` : "") +
                 `Mensagem:\n"${message}"\n\n` +
                 `Para enviar, chame novamente com confirmed: true.\n` +
                 `Após confirmação, haverá ${SEND_DELAY_SECONDS}s de janela para cancelar.`
@@ -143,15 +145,16 @@ export function registerMessageTools(server) {
         checkDailyRecipientLimit(chat_id);
 
         // Janela de cancelamento
-        logAudit({ action: "send_pending", chat_id, length: message.length });
+        logAudit({ action: "send_pending", chat_id, length: message.length, reply_to: reply_to_msg_id || null });
         await sendDelay();
 
         const result = await sendCommand("SEND_MESSAGE", {
           chatId: chat_id,
           text: message,
+          ...(reply_to_msg_id ? { quotedMsgId: reply_to_msg_id } : {}),
         });
 
-        logAudit({ action: "send_message", chat_id, length: message.length, message_id: result.id || "" });
+        logAudit({ action: "send_message", chat_id, length: message.length, message_id: result.id || "", reply_to: reply_to_msg_id || null });
 
         const stats = getDailyStats();
         return {
@@ -177,9 +180,10 @@ export function registerMessageTools(server) {
     {
       phone_number: z.string().describe("Número de telefone (ex: 5511999999999)"),
       message: z.string().describe("Texto da mensagem"),
+      reply_to_msg_id: z.string().optional().describe("ID da mensagem a citar/responder. Quando informado, a mensagem é enviada como reply com a citação da mensagem original."),
       confirmed: z.boolean().optional().default(false).describe("false = preview, true = enviar"),
     },
-    async ({ phone_number, message, confirmed }) => {
+    async ({ phone_number, message, reply_to_msg_id, confirmed }) => {
       try {
         const cleanNumber = phone_number.replace(/[\s\-\+\(\)]/g, "");
         const chatId = cleanNumber.includes("@") ? cleanNumber : `${cleanNumber}@c.us`;
@@ -194,6 +198,7 @@ export function registerMessageTools(server) {
               type: "text",
               text: `📋 PREVIEW — mensagem NÃO enviada ainda.\n\n` +
                 `Para: ${phone_number}\n` +
+                (reply_to_msg_id ? `Respondendo: ${reply_to_msg_id}\n` : "") +
                 `Mensagem:\n"${message}"\n\n` +
                 `Para enviar, chame novamente com confirmed: true.\n` +
                 `Após confirmação, haverá ${SEND_DELAY_SECONDS}s de janela para cancelar.`
@@ -205,10 +210,14 @@ export function registerMessageTools(server) {
         checkAntiLoop(chatId, message);
         checkDailyRecipientLimit(chatId);
 
-        logAudit({ action: "send_pending", chat_id: chatId, length: message.length });
+        logAudit({ action: "send_pending", chat_id: chatId, length: message.length, reply_to: reply_to_msg_id || null });
         await sendDelay();
 
-        const result = await sendCommand("SEND_MESSAGE", { chatId, text: message });
+        const result = await sendCommand("SEND_MESSAGE", {
+          chatId,
+          text: message,
+          ...(reply_to_msg_id ? { quotedMsgId: reply_to_msg_id } : {}),
+        });
 
         logAudit({ action: "send_message_by_phone", chat_id: chatId, phone: phone_number, length: message.length, message_id: result.id || "" });
 
@@ -330,9 +339,10 @@ export function registerMessageTools(server) {
       chat_id: z.string().describe("ID do chat"),
       action: z.enum(["reply", "ignore", "keep_unread"]).describe("Ação a tomar"),
       message: z.string().optional().describe("Mensagem de resposta (obrigatório se action='reply')"),
+      reply_to_msg_id: z.string().optional().describe("ID da mensagem a citar/responder. Quando informado, a mensagem é enviada como reply com a citação da mensagem original."),
       confirmed: z.boolean().optional().default(false).describe("false = preview (reply) ou aguarda confirmação (ignore). true = executar."),
     },
-    async ({ chat_id, action, message, confirmed }) => {
+    async ({ chat_id, action, message, reply_to_msg_id, confirmed }) => {
       try {
         if (action === "reply") {
           if (!message) throw new Error("Mensagem obrigatória para action='reply'.");
@@ -347,6 +357,7 @@ export function registerMessageTools(server) {
                 type: "text",
                 text: `📋 PREVIEW — resposta NÃO enviada ainda.\n\n` +
                   `Para: ${chat_id}\n` +
+                  (reply_to_msg_id ? `Respondendo: ${reply_to_msg_id}\n` : "") +
                   `Mensagem:\n"${message}"\n\n` +
                   `Para enviar, chame novamente com confirmed: true.\n` +
                   `Após confirmação, haverá ${SEND_DELAY_SECONDS}s de janela para cancelar.`
@@ -357,11 +368,15 @@ export function registerMessageTools(server) {
           checkRateLimit();
           checkAntiLoop(chat_id, message);
           checkDailyRecipientLimit(chat_id);
-          logAudit({ action: "resolve_reply_pending", chat_id, length: message.length });
+          logAudit({ action: "resolve_reply_pending", chat_id, length: message.length, reply_to: reply_to_msg_id || null });
           await sendDelay();
-          await sendCommand("SEND_MESSAGE", { chatId: chat_id, text: message });
+          await sendCommand("SEND_MESSAGE", {
+            chatId: chat_id,
+            text: message,
+            ...(reply_to_msg_id ? { quotedMsgId: reply_to_msg_id } : {}),
+          });
           await sendCommand("MARK_AS_READ", { chatId: chat_id });
-          logAudit({ action: "resolve_reply", chat_id, length: message.length });
+          logAudit({ action: "resolve_reply", chat_id, length: message.length, reply_to: reply_to_msg_id || null });
           const stats = getDailyStats();
           return {
             content: [{
