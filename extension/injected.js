@@ -188,7 +188,13 @@
       await new Promise((r) => setTimeout(r, 400));
 
       const opts = {};
-      if (payload.quotedMsgId) opts.quotedMsg = payload.quotedMsgId;
+      if (payload.quotedMsgId) {
+        // Forçar carregamento das mensagens no store para garantir que a mensagem citada
+        // esteja disponível — WPP.chat.sendTextMessage resolve o quotedMsg via getMessageById()
+        // e falha silenciosamente se a mensagem não estiver no MsgStore
+        await WPP.chat.getMessages(chatId, { count: 50 });
+        opts.quotedMsg = payload.quotedMsgId;
+      }
 
       const result = await WPP.chat.sendTextMessage(chatId, text, opts);
       return { sent: true, id: safeWid(result?.id) || "" };
