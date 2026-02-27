@@ -6,6 +6,11 @@ import {
   checkRateLimit,
   checkDailyRecipientLimit,
   checkGroupConfirmation,
+  checkMessageLength,
+  checkAntiLoop,
+  checkSensitiveContent,
+  sendDelay,
+  SEND_DELAY_SECONDS,
   logAudit,
   getAuditLog,
   getDailyStats,
@@ -56,37 +61,60 @@ export function registerMessageTools(server) {
   // ─── send_message ──────────────────────────────────────────────────────────
   server.tool(
     "whatsapp_send_message",
-    "Envia uma mensagem de texto no WhatsApp. Regras: máx 10 msgs/min (fixo), máx 50 destinatários únicos/dia, grupos exigem confirmed=true. Uma conversa com várias mensagens para a mesma pessoa conta como 1 destinatário.",
+    "Envia mensagem pelo WHATSAPP PESSOAL do Eric. " +
+    "CANAL: WhatsApp pessoal (não ChatGuru, não Zoom). Sempre confirmar canal com o usuário antes de usar. " +
+    "FLUXO: confirmed=false (padrão) = mostrar preview, NÃO envia. confirmed=true = enviar após 10s. " +
+    "Regras: 10 msgs/min, 50 destinatários/dia, grupos exigem confirmed=true, " +
+    "msgs >1000 chars exigem confirmed=true, conteúdo sensível exige confirmed=true.",
     {
       chat_id: z.string().describe("ID do chat destino (ex: 5511999999999@c.us)"),
-      message: z.string().describe("Texto da mensagem. Pode conter quebras de linha — conta como 1 envio."),
-      confirmed: z.boolean().optional().default(false).describe("Obrigatório true para grupos (@g.us)"),
+      message: z.string().describe("Texto da mensagem"),
+      confirmed: z.boolean().optional().default(false).describe(
+        "false (padrão) = mostrar preview. true = confirmar e enviar após 10s de janela de cancelamento."
+      ),
     },
     async ({ chat_id, message, confirmed }) => {
       try {
-        // Guardrails
-        checkRateLimit();
+        // Validações que rodam sempre (antes do preview)
+        checkMessageLength(message, confirmed);
+        checkSensitiveContent(message, confirmed);
         checkGroupConfirmation(chat_id, confirmed);
+
+        // PREVIEW — se não confirmado, mostrar e parar
+        if (!confirmed) {
+          return {
+            content: [{
+              type: "text",
+              text: `📋 PREVIEW — mensagem NÃO enviada ainda.\n\n` +
+                `Para: ${chat_id}\n` +
+                `Mensagem:\n"${message}"\n\n` +
+                `Para enviar, chame novamente com confirmed: true.\n` +
+                `Após confirmação, haverá ${SEND_DELAY_SECONDS}s de janela para cancelar.`
+            }],
+          };
+        }
+
+        // CONFIRMADO — rodar todos os guardrails
+        checkRateLimit();
+        checkAntiLoop(chat_id, message);
         checkDailyRecipientLimit(chat_id);
+
+        // Janela de cancelamento
+        logAudit({ action: "send_pending", chat_id, length: message.length });
+        await sendDelay();
 
         const result = await sendCommand("SEND_MESSAGE", {
           chatId: chat_id,
           text: message,
         });
 
-        // Log de auditoria
-        logAudit({
-          action: "send_message",
-          chat_id,
-          length: message.length,
-          message_id: result.id || "",
-        });
+        logAudit({ action: "send_message", chat_id, length: message.length, message_id: result.id || "" });
 
         const stats = getDailyStats();
         return {
           content: [{
             type: "text",
-            text: `Mensagem enviada.${result.id ? ` ID: ${result.id}` : ""}\n` +
+            text: `✅ Mensagem enviada.${result.id ? ` ID: ${result.id}` : ""}\n` +
               `Destinatários hoje: ${stats.uniqueRecipients}/${stats.maxRecipients}`
           }],
         };
@@ -99,39 +127,52 @@ export function registerMessageTools(server) {
   // ─── send_message_by_phone ─────────────────────────────────────────────────
   server.tool(
     "whatsapp_send_message_by_phone",
-    "Envia mensagem por número de telefone. Mesmas regras do send_message: máx 10/min, 50 destinatários/dia, grupos exigem confirmed=true.",
+    "Envia mensagem pelo WHATSAPP PESSOAL do Eric por número de telefone. " +
+    "CANAL: WhatsApp pessoal (não ChatGuru, não Zoom). Sempre confirmar canal com o usuário antes de usar. " +
+    "confirmed=false (padrão) = mostrar preview. confirmed=true = enviar após 10s de janela de cancelamento.",
     {
       phone_number: z.string().describe("Número de telefone (ex: 5511999999999)"),
       message: z.string().describe("Texto da mensagem"),
-      confirmed: z.boolean().optional().default(false).describe("Obrigatório true para grupos"),
+      confirmed: z.boolean().optional().default(false).describe("false = preview, true = enviar"),
     },
     async ({ phone_number, message, confirmed }) => {
       try {
         const cleanNumber = phone_number.replace(/[\s\-\+\(\)]/g, "");
         const chatId = cleanNumber.includes("@") ? cleanNumber : `${cleanNumber}@c.us`;
 
-        checkRateLimit();
+        checkMessageLength(message, confirmed);
+        checkSensitiveContent(message, confirmed);
         checkGroupConfirmation(chatId, confirmed);
+
+        if (!confirmed) {
+          return {
+            content: [{
+              type: "text",
+              text: `📋 PREVIEW — mensagem NÃO enviada ainda.\n\n` +
+                `Para: ${phone_number}\n` +
+                `Mensagem:\n"${message}"\n\n` +
+                `Para enviar, chame novamente com confirmed: true.\n` +
+                `Após confirmação, haverá ${SEND_DELAY_SECONDS}s de janela para cancelar.`
+            }],
+          };
+        }
+
+        checkRateLimit();
+        checkAntiLoop(chatId, message);
         checkDailyRecipientLimit(chatId);
 
-        const result = await sendCommand("SEND_MESSAGE", {
-          chatId,
-          text: message,
-        });
+        logAudit({ action: "send_pending", chat_id: chatId, length: message.length });
+        await sendDelay();
 
-        logAudit({
-          action: "send_message_by_phone",
-          chat_id: chatId,
-          phone: phone_number,
-          length: message.length,
-          message_id: result.id || "",
-        });
+        const result = await sendCommand("SEND_MESSAGE", { chatId, text: message });
+
+        logAudit({ action: "send_message_by_phone", chat_id: chatId, phone: phone_number, length: message.length, message_id: result.id || "" });
 
         const stats = getDailyStats();
         return {
           content: [{
             type: "text",
-            text: `Mensagem enviada para ${phone_number}.\n` +
+            text: `✅ Mensagem enviada para ${phone_number}.\n` +
               `Destinatários hoje: ${stats.uniqueRecipients}/${stats.maxRecipients}`
           }],
         };
@@ -237,20 +278,43 @@ export function registerMessageTools(server) {
   // ─── resolve_chat ──────────────────────────────────────────────────────────
   server.tool(
     "whatsapp_resolve_chat",
-    "Resolve um chat após leitura. Ações: 'reply' (responde e marca como lido), 'ignore' (marca como lido sem responder), 'keep_unread' (mantém não lido). Obrigatório usar após whatsapp_read_unread_messages.",
+    "Resolve um chat do WHATSAPP PESSOAL após leitura. " +
+    "Ações: 'reply' (mostra preview se confirmed=false, envia se confirmed=true), " +
+    "'ignore' (marca como lido sem responder — requer confirmação explícita do usuário), " +
+    "'keep_unread' (mantém não lido). Usar após whatsapp_read_unread_messages.",
     {
       chat_id: z.string().describe("ID do chat"),
       action: z.enum(["reply", "ignore", "keep_unread"]).describe("Ação a tomar"),
       message: z.string().optional().describe("Mensagem de resposta (obrigatório se action='reply')"),
-      confirmed: z.boolean().optional().default(false).describe("Obrigatório true para grupos"),
+      confirmed: z.boolean().optional().default(false).describe("false = preview (reply) ou aguarda confirmação (ignore). true = executar."),
     },
     async ({ chat_id, action, message, confirmed }) => {
       try {
         if (action === "reply") {
           if (!message) throw new Error("Mensagem obrigatória para action='reply'.");
-          checkRateLimit();
+          checkMessageLength(message, confirmed);
+          checkSensitiveContent(message, confirmed);
           checkGroupConfirmation(chat_id, confirmed);
+
+          // Preview se não confirmado
+          if (!confirmed) {
+            return {
+              content: [{
+                type: "text",
+                text: `📋 PREVIEW — resposta NÃO enviada ainda.\n\n` +
+                  `Para: ${chat_id}\n` +
+                  `Mensagem:\n"${message}"\n\n` +
+                  `Para enviar, chame novamente com confirmed: true.\n` +
+                  `Após confirmação, haverá ${SEND_DELAY_SECONDS}s de janela para cancelar.`
+              }],
+            };
+          }
+
+          checkRateLimit();
+          checkAntiLoop(chat_id, message);
           checkDailyRecipientLimit(chat_id);
+          logAudit({ action: "resolve_reply_pending", chat_id, length: message.length });
+          await sendDelay();
           await sendCommand("SEND_MESSAGE", { chatId: chat_id, text: message });
           await sendCommand("MARK_AS_READ", { chatId: chat_id });
           logAudit({ action: "resolve_reply", chat_id, length: message.length });
@@ -258,19 +322,28 @@ export function registerMessageTools(server) {
           return {
             content: [{
               type: "text",
-              text: `Respondido e marcado como lido.\nDestinatários hoje: ${stats.uniqueRecipients}/${stats.maxRecipients}`
+              text: `✅ Respondido e marcado como lido.\nDestinatários hoje: ${stats.uniqueRecipients}/${stats.maxRecipients}`
             }],
           };
         }
 
         if (action === "ignore") {
+          if (!confirmed) {
+            return {
+              content: [{
+                type: "text",
+                text: `⚠️ Confirma que quer ignorar este chat e marcá-lo como lido sem responder?\n` +
+                  `Chat: ${chat_id}\n\n` +
+                  `Chame novamente com confirmed: true para confirmar.`
+              }],
+            };
+          }
           await sendCommand("MARK_AS_READ", { chatId: chat_id });
           logAudit({ action: "resolve_ignore", chat_id });
-          return { content: [{ type: "text", text: `Chat marcado como lido (ignorado).` }] };
+          return { content: [{ type: "text", text: `✅ Chat marcado como lido (ignorado explicitamente).` }] };
         }
 
         if (action === "keep_unread") {
-          // Já está não lido — só registrar
           logAudit({ action: "resolve_keep_unread", chat_id });
           return { content: [{ type: "text", text: `Chat mantido como não lido.` }] };
         }
