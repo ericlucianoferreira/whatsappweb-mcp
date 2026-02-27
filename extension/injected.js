@@ -261,7 +261,12 @@
 
       // Buscar a mensagem pelo ID dentro do chat
       const msgs = await WPP.chat.getMessages(chatId, { count: 50 });
-      const msg = msgs.find((m) => safeWid(m.id) === msgId || m.id?.id === msgId);
+      const msg = msgs.find((m) => {
+        // Comparar por _serialized, id completo ou id parcial
+        const serial = m.id?._serialized || "";
+        const idStr = typeof m.id === "string" ? m.id : (m.id?.id || "");
+        return serial === msgId || idStr === msgId || serial.includes(msgId) || msgId.includes(idStr);
+      });
 
       if (!msg) throw new Error(`Mensagem não encontrada: ${msgId}`);
       if (!msg.isMedia && !msg.isMMS && msg.type === "chat") {
