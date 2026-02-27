@@ -238,8 +238,17 @@
     },
 
     MARK_AS_READ: async (payload) => {
-      const result = await WPP.chat.markIsRead(payload.chatId);
-      return { success: true, unreadCount: result?.unreadCount ?? 0 };
+      await WPP.chat.markIsRead(payload.chatId);
+      // markIsRead não reverte unreadCount=-1 (marcado manualmente).
+      // Forçar via modelo interno para garantir.
+      try {
+        const chat = WPP.chat.get(payload.chatId);
+        if (chat && chat.unreadCount !== 0) {
+          chat.unreadCount = 0;
+          chat.trigger && chat.trigger("change:unreadCount");
+        }
+      } catch {}
+      return { success: true };
     },
 
     MARK_AS_UNREAD: async (payload) => {

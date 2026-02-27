@@ -3,10 +3,7 @@
 export const WS_PORT = 3847;
 export const WS_PATH = "/whatsapp-bridge";
 
-// Rate limiting: máximo de mensagens enviadas por minuto
-export const MAX_SEND_PER_MINUTE = 10;
-
-// Delay humanizado para envio (ms)
+// Delay humanizado para envio (ms) — usado no injected.js
 export const SEND_DELAY_MIN = 800;
 export const SEND_DELAY_MAX = 2500;
 
