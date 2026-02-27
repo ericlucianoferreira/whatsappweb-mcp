@@ -259,12 +259,17 @@
     DOWNLOAD_MEDIA: async (payload) => {
       const { msgId, chatId } = payload;
 
-      // Buscar o objeto NATIVO da mensagem diretamente no MsgStore do WA
-      // getMessages() retorna objetos formatados — downloadMedia precisa do nativo
+      // O sufixo do msgId (ex: "2A33A87E65E3FE724FF9") é o id único da mensagem no store
+      const msgSuffix = msgId.split("_").pop();
+
+      // Forçar carregamento das mensagens do chat no store
+      await WPP.chat.getMessages(chatId, { count: 50 });
+
+      // Buscar objeto NATIVO no MsgStore — downloadMedia exige o objeto nativo, não o formatado
       const allMsgs = WPP.whatsapp.MsgStore.getModelsArray();
       const nativeMsg = allMsgs.find((m) => {
         const serial = m.id?._serialized || "";
-        return serial === msgId || serial.endsWith(msgId.split("_").pop());
+        return serial === msgId || serial.endsWith(msgSuffix);
       });
 
       if (!nativeMsg) throw new Error(`Mensagem não encontrada no store: ${msgId}`);
