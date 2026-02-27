@@ -255,6 +255,30 @@
       await WPP.chat.markIsUnread(payload.chatId);
       return { success: true };
     },
+
+    DOWNLOAD_MEDIA: async (payload) => {
+      const { msgId, chatId } = payload;
+
+      // Buscar a mensagem pelo ID dentro do chat
+      const msgs = await WPP.chat.getMessages(chatId, { count: 50 });
+      const msg = msgs.find((m) => safeWid(m.id) === msgId || m.id?.id === msgId);
+
+      if (!msg) throw new Error(`Mensagem não encontrada: ${msgId}`);
+      if (!msg.isMedia && !msg.isMMS && msg.type === "chat") {
+        throw new Error(`Mensagem não contém mídia (type: ${msg.type})`);
+      }
+
+      const media = await WPP.chat.downloadMedia(msg);
+      if (!media) throw new Error("Falha ao baixar mídia — arquivo pode ter expirado.");
+
+      return {
+        data: media.data,           // base64
+        mimetype: media.mimetype || msg.mimetype || "application/octet-stream",
+        filename: media.filename || msg.filename || `media_${Date.now()}`,
+        type: msg.type,             // image, video, audio, ptt, document, sticker
+        caption: msg.caption || msg.body || "",
+      };
+    },
   };
 
   // ─── ESCUTAR COMANDOS DO CONTENT SCRIPT ──────────────────────────────────────

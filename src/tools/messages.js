@@ -2,6 +2,10 @@
 
 import { z } from "zod";
 import { sendCommand } from "../ws-bridge.js";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { execFile } from "child_process";
 import {
   checkRateLimit,
   checkDailyRecipientLimit,
@@ -389,6 +393,143 @@ export function registerMessageTools(server) {
         return { content: [{ type: "text", text: `Chat marcado como não lido.` }] };
       } catch (err) {
         return { content: [{ type: "text", text: `Erro: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ─── download_media ────────────────────────────────────────────────────────
+  server.tool(
+    "whatsapp_download_media",
+    "Baixa a mídia (imagem, vídeo, documento, áudio, sticker) de uma mensagem do WhatsApp. " +
+    "Retorna o conteúdo em base64 com mimetype. Para imagens, o Claude pode visualizá-las diretamente. " +
+    "Para áudios (ptt/audio), use whatsapp_transcribe_audio em seguida.",
+    {
+      chat_id: z.string().describe("ID do chat (ex: 5511999999999@c.us)"),
+      msg_id: z.string().describe("ID da mensagem com mídia (campo 'id' retornado por list_messages)"),
+    },
+    async ({ chat_id, msg_id }) => {
+      try {
+        const result = await sendCommand("DOWNLOAD_MEDIA", { chatId: chat_id, msgId: msg_id });
+
+        const { data, mimetype, filename, type, caption } = result;
+
+        if (!data) throw new Error("Mídia retornou vazia — o arquivo pode ter expirado no servidor do WhatsApp.");
+
+        // Para imagens: retornar como bloco de imagem (Claude visualiza diretamente)
+        if (mimetype && mimetype.startsWith("image/")) {
+          const base64Data = data.replace(/^data:[^;]+;base64,/, "");
+          return {
+            content: [
+              {
+                type: "text",
+                text: `📎 Mídia baixada: ${filename || type}\nTipo: ${mimetype}${caption ? `\nLegenda: ${caption}` : ""}`,
+              },
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: mimetype,
+                  data: base64Data,
+                },
+              },
+            ],
+          };
+        }
+
+        // Para outros tipos (áudio, vídeo, documento): salvar em tmp e retornar caminho
+        const ext = mimetype ? mimetype.split("/")[1]?.split(";")[0] : "bin";
+        const tmpFile = path.join(os.tmpdir(), `whatsapp-media-${Date.now()}.${ext}`);
+        const base64Data = data.replace(/^data:[^;]+;base64,/, "");
+        fs.writeFileSync(tmpFile, Buffer.from(base64Data, "base64"));
+
+        logAudit({ action: "download_media", chat_id, msg_id, type, mimetype, tmpFile });
+
+        return {
+          content: [{
+            type: "text",
+            text: `📎 Mídia baixada: ${filename || type}\nTipo: ${mimetype}\nArquivo temporário: ${tmpFile}${caption ? `\nLegenda: ${caption}` : ""}\n\n` +
+              (type === "ptt" || type === "audio"
+                ? `🎤 É um áudio. Use whatsapp_transcribe_audio com:\n  chat_id: "${chat_id}"\n  msg_id: "${msg_id}"`
+                : ``)
+          }],
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Erro ao baixar mídia: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ─── transcribe_audio ──────────────────────────────────────────────────────
+  server.tool(
+    "whatsapp_transcribe_audio",
+    "Transcreve um áudio ou mensagem de voz (ptt) do WhatsApp usando Whisper localmente. " +
+    "Faz o download do áudio e transcreve sem enviar para nenhuma API externa. " +
+    "Requer: Python com openai-whisper instalado (pip install openai-whisper) e ffmpeg no PATH.",
+    {
+      chat_id: z.string().describe("ID do chat"),
+      msg_id: z.string().describe("ID da mensagem de áudio"),
+      language: z.string().optional().default("pt").describe("Idioma do áudio (padrão: pt para português)"),
+    },
+    async ({ chat_id, msg_id, language }) => {
+      try {
+        // 1. Baixar o áudio via DOWNLOAD_MEDIA
+        const mediaResult = await sendCommand("DOWNLOAD_MEDIA", { chatId: chat_id, msgId: msg_id });
+        const { data, mimetype, type } = mediaResult;
+
+        if (!data) throw new Error("Áudio retornou vazio — arquivo pode ter expirado.");
+        if (type !== "ptt" && type !== "audio") {
+          throw new Error(`Esta mensagem não é um áudio (type: ${type}). Use whatsapp_download_media para outros tipos de mídia.`);
+        }
+
+        // 2. Salvar em arquivo temporário
+        const tmpOgg = path.join(os.tmpdir(), `whatsapp-audio-${Date.now()}.ogg`);
+        const base64Data = data.replace(/^data:[^;]+;base64,/, "");
+        fs.writeFileSync(tmpOgg, Buffer.from(base64Data, "base64"));
+
+        // 3. Transcrever com Whisper via Python
+        const transcript = await new Promise((resolve, reject) => {
+          const pythonScript = `
+import whisper, sys, json
+model = whisper.load_model("base")
+result = model.transcribe(sys.argv[1], language="${language}")
+print(result["text"].strip())
+`.trim();
+
+          const scriptFile = path.join(os.tmpdir(), "whisper_transcribe.py");
+          fs.writeFileSync(scriptFile, pythonScript);
+
+          execFile("python3", [scriptFile, tmpOgg], { timeout: 120_000 }, (err, stdout, stderr) => {
+            // Limpar arquivos temporários
+            try { fs.unlinkSync(tmpOgg); } catch {}
+            try { fs.unlinkSync(scriptFile); } catch {}
+
+            if (err) {
+              if (err.message.includes("No module named whisper") || stderr.includes("No module named whisper")) {
+                reject(new Error(
+                  "Whisper não está instalado. Para instalar:\n" +
+                  "1. pip install openai-whisper\n" +
+                  "2. Instalar ffmpeg: https://ffmpeg.org/download.html\n" +
+                  "Depois reinicie o Claude Code."
+                ));
+              } else {
+                reject(new Error(`Erro no Whisper: ${stderr || err.message}`));
+              }
+              return;
+            }
+            resolve(stdout.trim());
+          });
+        });
+
+        logAudit({ action: "transcribe_audio", chat_id, msg_id, language, length: transcript.length });
+
+        return {
+          content: [{
+            type: "text",
+            text: `🎤 Transcrição (${language}):\n\n"${transcript}"`,
+          }],
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Erro na transcrição: ${err.message}` }] };
       }
     }
   );
