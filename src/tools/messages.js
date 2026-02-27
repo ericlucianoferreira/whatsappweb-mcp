@@ -63,6 +63,8 @@ export function registerMessageTools(server) {
     "whatsapp_send_message",
     "Envia mensagem pelo WHATSAPP PESSOAL do Eric. " +
     "CANAL: WhatsApp pessoal (não ChatGuru, não Zoom). Sempre confirmar canal com o usuário antes de usar. " +
+    "DESTINATÁRIO: SEMPRE use whatsapp_search_contacts antes se o usuário informou apenas um nome. " +
+    "Se a busca retornar mais de 1 contato com nome similar, NÃO envie — exiba a lista e peça ao usuário que confirme o chat_id exato. " +
     "FLUXO: confirmed=false (padrão) = mostrar preview, NÃO envia. confirmed=true = enviar após 10s. " +
     "Regras: 10 msgs/min, 50 destinatários/dia, grupos exigem confirmed=true, " +
     "msgs >1000 chars exigem confirmed=true, conteúdo sensível exige confirmed=true.",
@@ -129,6 +131,7 @@ export function registerMessageTools(server) {
     "whatsapp_send_message_by_phone",
     "Envia mensagem pelo WHATSAPP PESSOAL do Eric por número de telefone. " +
     "CANAL: WhatsApp pessoal (não ChatGuru, não Zoom). Sempre confirmar canal com o usuário antes de usar. " +
+    "Use este tool apenas quando o número de telefone for explicitamente conhecido — sem ambiguidade de destinatário. " +
     "confirmed=false (padrão) = mostrar preview. confirmed=true = enviar após 10s de janela de cancelamento.",
     {
       phone_number: z.string().describe("Número de telefone (ex: 5511999999999)"),

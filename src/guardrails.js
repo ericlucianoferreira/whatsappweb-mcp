@@ -173,6 +173,22 @@ export function sendDelay() {
 
 export const SEND_DELAY_SECONDS = SEND_DELAY_MS / 1000;
 
+// ─── DESTINATÁRIO AMBÍGUO ─────────────────────────────────────────────────────
+// Quando a busca retorna mais de 1 resultado possível, bloquear e exigir chat_id explícito.
+
+export function checkAmbiguousRecipient(matches, query) {
+  if (matches && matches.length > 1) {
+    const list = matches
+      .map((c, i) => `${i + 1}. ${c.name || c.id} — ID: ${c.id}`)
+      .join("\n");
+    throw new Error(
+      `Destinatário ambíguo: "${query}" retornou ${matches.length} contatos.\n\n` +
+      `${list}\n\n` +
+      `Use o chat_id exato de um dos contatos acima para evitar envio para a pessoa errada.`
+    );
+  }
+}
+
 // ─── LOG DE AUDITORIA ─────────────────────────────────────────────────────────
 
 export function logAudit(entry) {

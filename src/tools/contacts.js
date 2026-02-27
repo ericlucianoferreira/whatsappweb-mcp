@@ -7,7 +7,9 @@ export function registerContactTools(server) {
   // ─── search_contacts ───────────────────────────────────────────────────────
   server.tool(
     "whatsapp_search_contacts",
-    "Busca contatos no WhatsApp por nome ou número de telefone.",
+    "Busca contatos no WhatsApp por nome ou número de telefone. " +
+    "REGRA: Se retornar mais de 1 resultado com nomes similares ao buscado, NÃO prosseguir com envio. " +
+    "Exibir a lista completa ao usuário e pedir que confirme o chat_id exato antes de qualquer envio.",
     {
       query: z.string().describe("Nome ou número para buscar"),
     },
