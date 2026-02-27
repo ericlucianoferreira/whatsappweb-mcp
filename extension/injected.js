@@ -259,42 +259,28 @@
     DOWNLOAD_MEDIA: async (payload) => {
       const { msgId, chatId } = payload;
 
-      // Buscar a mensagem pelo ID dentro do chat
-      const msgs = await WPP.chat.getMessages(chatId, { count: 50 });
-      const msg = msgs.find((m) => {
-        // Comparar por _serialized, id completo ou id parcial
+      // Buscar o objeto NATIVO da mensagem diretamente no MsgStore do WA
+      // getMessages() retorna objetos formatados — downloadMedia precisa do nativo
+      const allMsgs = WPP.whatsapp.MsgStore.getModelsArray();
+      const nativeMsg = allMsgs.find((m) => {
         const serial = m.id?._serialized || "";
-        const idStr = typeof m.id === "string" ? m.id : (m.id?.id || "");
-        return serial === msgId || idStr === msgId || serial.includes(msgId) || msgId.includes(idStr);
+        return serial === msgId || serial.endsWith(msgId.split("_").pop());
       });
 
-      if (!msg) throw new Error(`Mensagem não encontrada: ${msgId}`);
-      if (!msg.isMedia && !msg.isMMS && msg.type === "chat") {
-        throw new Error(`Mensagem não contém mídia (type: ${msg.type})`);
+      if (!nativeMsg) throw new Error(`Mensagem não encontrada no store: ${msgId}`);
+      if (nativeMsg.type === "chat") {
+        throw new Error(`Mensagem não contém mídia (type: chat)`);
       }
 
-      // downloadMedia aceita o objeto msg completo do store interno do WA
-      // Para @lid, buscar diretamente pelo store de mensagens
-      let media;
-      try {
-        media = await WPP.chat.downloadMedia(msg);
-      } catch (e) {
-        // Fallback: tentar via ID serializado
-        const msgObj = WPP.whatsapp.MsgStore.get(msg.id);
-        if (msgObj) {
-          media = await WPP.chat.downloadMedia(msgObj);
-        } else {
-          throw e;
-        }
-      }
+      const media = await WPP.chat.downloadMedia(nativeMsg);
       if (!media) throw new Error("Falha ao baixar mídia — arquivo pode ter expirado.");
 
       return {
-        data: media.data,           // base64
-        mimetype: media.mimetype || msg.mimetype || "application/octet-stream",
-        filename: media.filename || msg.filename || `media_${Date.now()}`,
-        type: msg.type,             // image, video, audio, ptt, document, sticker
-        caption: msg.caption || msg.body || "",
+        data: media.data,
+        mimetype: media.mimetype || nativeMsg.mimetype || "application/octet-stream",
+        filename: media.filename || nativeMsg.filename || `media_${Date.now()}`,
+        type: nativeMsg.type,
+        caption: nativeMsg.caption || nativeMsg.body || "",
       };
     },
   };
