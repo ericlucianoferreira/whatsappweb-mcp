@@ -27,6 +27,20 @@
 
   // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
+  /**
+   * Extrai o ID serializado de um objeto Wid de forma segura.
+   * Wid objects do WA-JS têm ._serialized como string.
+   * NUNCA usar .toString() em Wid — retorna "[object Object]".
+   */
+  function safeWid(id) {
+    if (!id) return "";
+    if (typeof id === "string") return id;
+    if (id._serialized && typeof id._serialized === "string") return id._serialized;
+    // Fallback: reconstruir manualmente
+    if (id.user && id.server) return `${id.user}@${id.server}`;
+    return "";
+  }
+
   function randomDelay(min = 800, max = 2500) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
   }
@@ -40,7 +54,7 @@
 
   function formatChat(chat) {
     return {
-      id: chat.id?._serialized || chat.id?.toString() || chat.id,
+      id: safeWid(chat.id),
       name: chat.name || chat.contact?.name || chat.contact?.pushname || "",
       isGroup: chat.isGroup || false,
       unreadCount: chat.unreadCount || 0,
@@ -56,8 +70,8 @@
 
   function formatMessage(msg) {
     return {
-      id: msg.id?._serialized || msg.id?.toString() || msg.id,
-      from: msg.from?._serialized || msg.from || "",
+      id: safeWid(msg.id),
+      from: safeWid(msg.from),
       sender: msg.sender?.pushname || msg.sender?.name || "",
       body: msg.body || "",
       timestamp: msg.t || msg.timestamp,
@@ -68,14 +82,30 @@
   }
 
   function formatContact(contact) {
+    const id = safeWid(contact.id);
     return {
-      id: contact.id?._serialized || contact.id?.toString() || contact.id,
+      id,
       name: contact.name || contact.pushname || contact.verifiedName || "",
       pushname: contact.pushname || "",
-      number: contact.id?._serialized?.replace("@c.us", "") || "",
+      number: id.replace("@c.us", ""),
       isMyContact: contact.isMyContact || false,
       isBusiness: contact.isBusiness || false,
     };
+  }
+
+  /**
+   * Normaliza um chatId string para formato WPP válido.
+   * Remove +, garante @c.us para números.
+   */
+  function normalizeChatId(chatId) {
+    let id = String(chatId).trim();
+    // Remover + do início (WPP não aceita)
+    id = id.replace(/^\+/, "");
+    // Adicionar @c.us se parece número sem @
+    if (!id.includes("@") && /^\d+$/.test(id)) {
+      id = id + "@c.us";
+    }
+    return id;
   }
 
   // ─── COMMAND HANDLERS ────────────────────────────────────────────────────────
@@ -83,7 +113,6 @@
   const handlers = {
     IS_AUTHENTICATED: async () => {
       try {
-        // isAuthenticated() é SINCRONO — retorna boolean direto
         const authenticated = WPP.conn.isAuthenticated();
         return { authenticated };
       } catch {
@@ -92,12 +121,10 @@
     },
 
     GET_MY_INFO: async () => {
-      // getMyUserId() é SINCRONO — retorna Wid | undefined
       const wid = WPP.conn.getMyUserId();
-      const widStr = wid?._serialized || wid?.toString?.() || "";
+      const widStr = safeWid(wid);
       let name = "";
       try {
-        // contact.get() é ASYNC
         const me = await WPP.contact.get(widStr);
         name = me?.pushname || me?.name || "";
       } catch {}
@@ -112,7 +139,6 @@
     GET_CHATS: async (payload) => {
       const limit = payload.limit || 20;
       const allChats = await WPP.chat.list({ count: limit });
-      // Ordenar por última mensagem (mais recente primeiro)
       allChats.sort((a, b) => {
         const tA = a.lastMessage?.t || a.t || 0;
         const tB = b.lastMessage?.t || b.t || 0;
@@ -123,7 +149,6 @@
     },
 
     GET_CHAT: async (payload) => {
-      // chat.get() é SINCRONO — retorna ChatModel | undefined
       const chat = WPP.chat.get(payload.chatId);
       if (!chat) throw new Error(`Chat não encontrado: ${payload.chatId}`);
       return formatChat(chat);
@@ -134,7 +159,7 @@
       const allChats = await WPP.chat.list();
       const filtered = allChats.filter((c) => {
         const name = (c.name || c.contact?.name || c.contact?.pushname || "").toLowerCase();
-        const id = (c.id?._serialized || "").toLowerCase();
+        const id = safeWid(c.id).toLowerCase();
         return name.includes(query) || id.includes(query);
       });
       return { chats: filtered.slice(0, 20).map(formatChat) };
@@ -149,17 +174,25 @@
     },
 
     SEND_MESSAGE: async (payload) => {
-      const delay = randomDelay();
-      // sendTextMessage já tem delay nativo + markIsRead: true por default
-      // O delay nativo simula digitação internamente — mais seguro que markIsComposing manual
-      const result = await WPP.chat.sendTextMessage(payload.chatId, payload.text, {
-        delay,
-        createChat: true,
-      });
-      return {
-        id: result?.id || "",
-        sent: true,
-      };
+      const chatId = normalizeChatId(payload.chatId);
+      const text = String(payload.text);
+
+      if (!chatId || chatId === "[object Object]") {
+        throw new Error(`chatId inválido: ${payload.chatId}. Deve ser no formato "5511999999999@c.us".`);
+      }
+
+      try {
+        const result = await WPP.chat.sendTextMessage(chatId, text, {
+          delay: randomDelay(),
+        });
+        return {
+          id: safeWid(result?.id) || "",
+          sent: true,
+        };
+      } catch (err) {
+        console.error("[INJ] SEND_MESSAGE erro:", err);
+        throw err;
+      }
     },
 
     SEARCH_CONTACTS: async (payload) => {
@@ -167,7 +200,7 @@
       const allContacts = await WPP.contact.list();
       const filtered = allContacts.filter((c) => {
         const name = (c.name || c.pushname || c.verifiedName || "").toLowerCase();
-        const id = (c.id?._serialized || "").toLowerCase();
+        const id = safeWid(c.id).toLowerCase();
         return name.includes(query) || id.includes(query);
       });
       return { contacts: filtered.slice(0, 20).map(formatContact) };
@@ -178,7 +211,7 @@
       const result = await WPP.contact.queryExists(`${phone}@c.us`);
       return {
         exists: !!result,
-        jid: result?.wid?._serialized || null,
+        jid: safeWid(result?.wid) || null,
         isBusiness: result?.biz || false,
       };
     },
@@ -194,20 +227,12 @@
       };
     },
 
-    // GET_UNREAD: retorna APENAS metadados (nome, unreadCount, última msg)
-    // NÃO abre cada chat para evitar marcar como lido / blue ticks
     GET_UNREAD: async () => {
       const unreadChats = await WPP.chat.list({ onlyWithUnreadMessage: true });
-      const result = unreadChats.slice(0, 20).map((chat) => {
-        const formatted = formatChat(chat);
-        // Incluir a última mensagem como preview (já está no objeto chat)
-        // Não chamar getMessages para não disparar "visto"
-        return formatted;
-      });
+      const result = unreadChats.slice(0, 20).map(formatChat);
       return { chats: result };
     },
 
-    // GET_UNREAD_DETAIL: para quando QUISER ler as mensagens (aceita o risco de marcar como lido)
     GET_UNREAD_DETAIL: async (payload) => {
       const chatId = payload.chatId;
       const msgs = await WPP.chat.getMessages(chatId, {
@@ -217,13 +242,11 @@
       return { messages: msgs.map(formatMessage) };
     },
 
-    // MARK_AS_READ: marcar chat como lido explicitamente
     MARK_AS_READ: async (payload) => {
       const result = await WPP.chat.markIsRead(payload.chatId);
       return { success: true, unreadCount: result?.unreadCount ?? 0 };
     },
 
-    // MARK_AS_UNREAD: marcar chat como não lido
     MARK_AS_UNREAD: async (payload) => {
       await WPP.chat.markIsUnread(payload.chatId);
       return { success: true };

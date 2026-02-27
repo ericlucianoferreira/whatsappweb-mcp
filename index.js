@@ -3,11 +3,23 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { startServer } from "./src/ws-bridge.js";
+import { startServer, stopServer } from "./src/ws-bridge.js";
 import { registerStatusTools } from "./src/tools/status.js";
 import { registerChatTools } from "./src/tools/chats.js";
 import { registerMessageTools } from "./src/tools/messages.js";
 import { registerContactTools } from "./src/tools/contacts.js";
+
+// ─── GRACEFUL SHUTDOWN ──────────────────────────────────────────────────────
+
+async function shutdown() {
+  try {
+    await stopServer();
+  } catch {}
+  process.exit(0);
+}
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
 
 // ─── MCP SERVER ──────────────────────────────────────────────────────────────
 
@@ -25,7 +37,7 @@ registerContactTools(server);   // 3 tools: search_contacts, check_number_exists
 // ─── INICIAR ─────────────────────────────────────────────────────────────────
 
 // 1. Iniciar WebSocket server para comunicação com a extensão
-startServer();
+await startServer();
 
 // 2. Conectar ao Claude Code via stdio
 const transport = new StdioServerTransport();

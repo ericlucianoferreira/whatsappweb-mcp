@@ -2,10 +2,12 @@
 // Mantém WebSocket com o MCP server e retransmite comandos para o content script.
 
 const WS_URL = "ws://localhost:3847/whatsapp-bridge";
-const RECONNECT_DELAY = 5000;
-// Manifest V3: service workers morrem após 30s de inatividade.
-// Ping a cada 20s mantém o worker vivo enquanto o WebSocket estiver ativo.
 const PING_INTERVAL = 20000;
+
+// Exponential backoff para reconexão
+const BACKOFF_BASE = 1000;   // 1s inicial
+const BACKOFF_MAX = 30000;   // 30s máximo
+let reconnectAttempt = 0;
 
 let ws = null;
 let contentPort = null;
@@ -13,12 +15,13 @@ let pingTimer = null;
 let reconnectTimer = null;
 let isConnecting = false;
 
-// Manter o service worker vivo enquanto houver conexão ativa
+// ─── KEEP-ALIVE (Manifest V3) ──────────────────────────────────────────────
 // chrome.alarms é mais confiável que setInterval em Manifest V3
-chrome.alarms.create("keep-alive", { periodInMinutes: 0.4 }); // ~24s
+// Service workers morrem após 30s de inatividade — alarm a cada ~24s mantém vivo
+
+chrome.alarms.create("keep-alive", { periodInMinutes: 0.4 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "keep-alive") {
-    // O simples fato de receber o alarm já reativa o service worker
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       connectWebSocket();
     }
@@ -43,10 +46,11 @@ function connectWebSocket() {
   ws.onopen = () => {
     console.log("[SW] WebSocket conectado ao MCP server");
     isConnecting = false;
+    reconnectAttempt = 0; // Reset backoff on success
     clearTimeout(reconnectTimer);
     updateStatus("ws_connected", true);
 
-    // Keep-alive
+    // Keep-alive ping
     clearInterval(pingTimer);
     pingTimer = setInterval(() => {
       if (ws && ws.readyState === WebSocket.OPEN) {
@@ -58,11 +62,15 @@ function connectWebSocket() {
   ws.onmessage = (event) => {
     try {
       const msg = JSON.parse(event.data);
+
+      // Ignorar respostas de identity (probe do server)
+      if (msg.type === "identity") return;
+
       // Retransmitir comando do MCP server para o content script
       if (contentPort) {
         contentPort.postMessage(msg);
       } else {
-        // Extensão não conectada ao WhatsApp Web
+        // Content script não conectado — responder erro
         if (msg.id) {
           ws.send(JSON.stringify({
             id: msg.id,
@@ -91,10 +99,12 @@ function connectWebSocket() {
 
 function scheduleReconnect() {
   clearTimeout(reconnectTimer);
-  reconnectTimer = setTimeout(() => {
-    console.log("[SW] Tentando reconectar...");
-    connectWebSocket();
-  }, RECONNECT_DELAY);
+  // Exponential backoff com jitter
+  const jitter = Math.random() * 500;
+  const delay = Math.min(BACKOFF_BASE * Math.pow(2, reconnectAttempt) + jitter, BACKOFF_MAX);
+  reconnectAttempt++;
+  console.log(`[SW] Reconexão em ${Math.round(delay / 1000)}s (tentativa ${reconnectAttempt})`);
+  reconnectTimer = setTimeout(() => connectWebSocket(), delay);
 }
 
 // ─── CONTENT SCRIPT CONNECTION ───────────────────────────────────────────────
@@ -107,7 +117,6 @@ chrome.runtime.onConnect.addListener((port) => {
   updateStatus("wa_connected", true);
 
   port.onMessage.addListener((msg) => {
-    // Retransmitir resposta do content script para o MCP server via WebSocket
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg));
     }
@@ -138,6 +147,7 @@ async function updateStatus(key, value) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "reconnect") {
+    reconnectAttempt = 0; // Reset backoff on manual reconnect
     if (ws) {
       ws.close();
     }
