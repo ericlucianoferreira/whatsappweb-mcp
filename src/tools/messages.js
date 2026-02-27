@@ -20,6 +20,12 @@ import {
   getDailyStats,
 } from "../guardrails.js";
 
+// Helper: aceita boolean ou string "true"/"false" — evita erro -32602 quando o modelo passa string
+const zBool = (defaultVal) =>
+  z.union([z.boolean(), z.string().transform(v => v === "true")])
+   .optional()
+   .default(defaultVal);
+
 export function registerMessageTools(server) {
   // ─── list_messages ─────────────────────────────────────────────────────────
   server.tool(
@@ -31,7 +37,7 @@ export function registerMessageTools(server) {
     {
       chat_id: z.string().describe("ID do chat"),
       limit: z.number().optional().default(30).describe("Quantidade de mensagens (padrão 30, máx 50). Ignorado quando unread_only=true."),
-      unread_only: z.boolean().optional().default(true).describe("true (padrão) = somente não lidas. false = N mensagens mais recentes (histórico/contexto)."),
+      unread_only: zBool(true).describe("true (padrão) = somente não lidas. false = N mensagens mais recentes (histórico/contexto)."),
     },
     async ({ chat_id, limit, unread_only }) => {
       try {
@@ -113,9 +119,7 @@ export function registerMessageTools(server) {
       chat_id: z.string().describe("ID do chat destino (ex: 5511999999999@c.us)"),
       message: z.string().describe("Texto da mensagem"),
       reply_to_msg_id: z.string().optional().describe("ID da mensagem a citar/responder (campo 'id' retornado por list_messages). Quando informado, a mensagem é enviada como reply com a citação da mensagem original."),
-      confirmed: z.boolean().optional().default(false).describe(
-        "false (padrão) = mostrar preview. true = confirmar e enviar após 10s de janela de cancelamento."
-      ),
+      confirmed: zBool(false).describe("false (padrão) = mostrar preview. true = confirmar e enviar após 10s de janela de cancelamento."),
     },
     async ({ chat_id, message, reply_to_msg_id, confirmed }) => {
       try {
@@ -181,7 +185,7 @@ export function registerMessageTools(server) {
       phone_number: z.string().describe("Número de telefone (ex: 5511999999999)"),
       message: z.string().describe("Texto da mensagem"),
       reply_to_msg_id: z.string().optional().describe("ID da mensagem a citar/responder. Quando informado, a mensagem é enviada como reply com a citação da mensagem original."),
-      confirmed: z.boolean().optional().default(false).describe("false = preview, true = enviar"),
+      confirmed: zBool(false).describe("false = preview, true = enviar"),
     },
     async ({ phone_number, message, reply_to_msg_id, confirmed }) => {
       try {
@@ -340,7 +344,7 @@ export function registerMessageTools(server) {
       action: z.enum(["reply", "ignore", "keep_unread"]).describe("Ação a tomar"),
       message: z.string().optional().describe("Mensagem de resposta (obrigatório se action='reply')"),
       reply_to_msg_id: z.string().optional().describe("ID da mensagem a citar/responder. Quando informado, a mensagem é enviada como reply com a citação da mensagem original."),
-      confirmed: z.boolean().optional().default(false).describe("false = preview (reply) ou aguarda confirmação (ignore). true = executar."),
+      confirmed: zBool(false).describe("false = preview (reply) ou aguarda confirmação (ignore). true = executar."),
     },
     async ({ chat_id, action, message, reply_to_msg_id, confirmed }) => {
       try {
