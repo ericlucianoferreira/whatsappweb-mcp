@@ -183,58 +183,11 @@
 
       await new Promise((r) => setTimeout(r, randomDelay()));
 
-      // ── Estratégia 1: MsgKey com fromMe=true + sendRawMessage ─────────────────
-      // Bypassa getMyUserWid() quebrado no wa-js 3.20.1 + WA Web 2.3000.x
-      // O construtor { fromMe, remote, id } não chama assertWid no remetente.
-      try {
-        const toWid = WPP.whatsapp.WidFactory.createWid(chatId);
-        const msgId = await WPP.whatsapp.MsgKey.newId();
-        const prebuiltKey = new WPP.whatsapp.MsgKey({ fromMe: true, remote: toWid, id: msgId });
-        const result = await WPP.chat.sendRawMessage(chatId, {
-          body: text, type: "chat", subtype: null, urlText: null, urlNumber: null,
-          id: prebuiltKey,
-        }, {});
-        return { id: safeWid(result?.id) || msgId, sent: true };
-      } catch (e1) {
-        console.warn("[INJ] Estratégia 1 falhou:", e1.message);
-      }
-
-      // ── Estratégia 2: addAndSendMsgToChat via webpack ─────────────────────────
-      try {
-        let addAndSend = null;
-        WPP.webpack.search((m) => {
-          if (typeof m?.addAndSendMsgToChat === "function") { addAndSend = m; return true; }
-        });
-        if (addAndSend) {
-          const chat = WPP.chat.get(chatId);
-          if (!chat) throw new Error("Chat não encontrado");
-          const result = await addAndSend.addAndSendMsgToChat(chat, {
-            body: text, type: "chat", subtype: null, urlText: null, urlNumber: null,
-          });
-          return { id: safeWid(result?.id) || "", sent: true };
-        }
-      } catch (e2) {
-        console.warn("[INJ] Estratégia 2 falhou:", e2.message);
-      }
-
-      // ── Estratégia 3: sendTextMsgToChat via webpack com WidFactory ────────────
-      try {
-        let sendModule = null;
-        WPP.webpack.search((m) => {
-          if (m?.sendTextMsgToChat && !sendModule) { sendModule = m; return true; }
-        });
-        if (sendModule?.sendTextMsgToChat) {
-          const wid = WPP.whatsapp.WidFactory.createWid(chatId);
-          await sendModule.sendTextMsgToChat(wid, text);
-          return { id: "", sent: true };
-        }
-      } catch (e3) {
-        console.warn("[INJ] Estratégia 3 falhou:", e3.message);
-      }
-
-      // ── Estratégia 4: WPP.chat.sendTextMessage padrão (último recurso) ────────
+      // wa-js 3.22.0 corrige os dois bugs (Invalid WID + openChatBottom)
+      await WPP.chat.openChatBottom(chatId);
+      await new Promise((r) => setTimeout(r, 400));
       const result = await WPP.chat.sendTextMessage(chatId, text);
-      return { id: safeWid(result?.id) || "", sent: true };
+      return { sent: true, id: safeWid(result?.id) || "" };
     },
 
     SEARCH_CONTACTS: async (payload) => {
