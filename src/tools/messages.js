@@ -184,7 +184,7 @@ export function registerMessageTools(server) {
   // ─── read_unread_messages ──────────────────────────────────────────────────
   server.tool(
     "whatsapp_read_unread_messages",
-    "Lê mensagens não lidas de um chat específico. ATENÇÃO: PODE marcar como lidas (blue ticks). Use get_unread_chats primeiro para identificar os chats, depois esta tool só quando quiser realmente ler.",
+    "Lê mensagens não lidas de um chat. REGRA IMPORTANTE: após ler, o chat é automaticamente marcado de volta como NÃO LIDO para não perder. Você DEVE usar whatsapp_resolve_chat depois para decidir o que fazer: responder, ignorar (marcar como lido) ou manter não lido.",
     {
       chat_id: z.string().describe("ID do chat"),
       limit: z.number().optional().default(20).describe("Quantidade máxima (padrão 20)"),
@@ -195,6 +195,11 @@ export function registerMessageTools(server) {
           chatId: chat_id,
           limit: Math.min(limit, 50),
         });
+
+        // Sempre marcar de volta como não lido — regra inviolável
+        try {
+          await sendCommand("MARK_AS_UNREAD", { chatId: chat_id });
+        } catch {}
 
         if (!result.messages || result.messages.length === 0) {
           return { content: [{ type: "text", text: "Nenhuma mensagem não lida neste chat." }] };
@@ -209,12 +214,67 @@ export function registerMessageTools(server) {
           type: m.type || "chat",
         }));
 
+        // Log de auditoria — lido sem resolução
+        logAudit({ action: "read_unread", chat_id, count: formatted.length, resolved: false });
+
         return {
           content: [{
             type: "text",
-            text: `⚠️ Este chat pode ter sido marcado como lido.\n\n${formatted.length} mensagem(ns) não lida(s):\n\n${JSON.stringify(formatted, null, 2)}`
+            text: `${formatted.length} mensagem(ns) lida(s).\n` +
+              `⚠️ Chat mantido como NÃO LIDO. Use whatsapp_resolve_chat para decidir:\n` +
+              `- "reply" + message: responder e marcar como lido\n` +
+              `- "ignore": marcar como lido sem responder\n` +
+              `- "keep_unread": manter não lido\n\n` +
+              JSON.stringify(formatted, null, 2)
           }],
         };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Erro: ${err.message}` }] };
+      }
+    }
+  );
+
+  // ─── resolve_chat ──────────────────────────────────────────────────────────
+  server.tool(
+    "whatsapp_resolve_chat",
+    "Resolve um chat após leitura. Ações: 'reply' (responde e marca como lido), 'ignore' (marca como lido sem responder), 'keep_unread' (mantém não lido). Obrigatório usar após whatsapp_read_unread_messages.",
+    {
+      chat_id: z.string().describe("ID do chat"),
+      action: z.enum(["reply", "ignore", "keep_unread"]).describe("Ação a tomar"),
+      message: z.string().optional().describe("Mensagem de resposta (obrigatório se action='reply')"),
+      confirmed: z.boolean().optional().default(false).describe("Obrigatório true para grupos"),
+    },
+    async ({ chat_id, action, message, confirmed }) => {
+      try {
+        if (action === "reply") {
+          if (!message) throw new Error("Mensagem obrigatória para action='reply'.");
+          checkRateLimit();
+          checkGroupConfirmation(chat_id, confirmed);
+          checkDailyRecipientLimit(chat_id);
+          await sendCommand("SEND_MESSAGE", { chatId: chat_id, text: message });
+          await sendCommand("MARK_AS_READ", { chatId: chat_id });
+          logAudit({ action: "resolve_reply", chat_id, length: message.length });
+          const stats = getDailyStats();
+          return {
+            content: [{
+              type: "text",
+              text: `Respondido e marcado como lido.\nDestinatários hoje: ${stats.uniqueRecipients}/${stats.maxRecipients}`
+            }],
+          };
+        }
+
+        if (action === "ignore") {
+          await sendCommand("MARK_AS_READ", { chatId: chat_id });
+          logAudit({ action: "resolve_ignore", chat_id });
+          return { content: [{ type: "text", text: `Chat marcado como lido (ignorado).` }] };
+        }
+
+        if (action === "keep_unread") {
+          // Já está não lido — só registrar
+          logAudit({ action: "resolve_keep_unread", chat_id });
+          return { content: [{ type: "text", text: `Chat mantido como não lido.` }] };
+        }
+
       } catch (err) {
         return { content: [{ type: "text", text: `Erro: ${err.message}` }] };
       }
