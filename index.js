@@ -28,7 +28,7 @@ const server = new McpServer({
   version: "1.0.0",
 });
 
-// Registrar todas as tools (15 total)
+// Registrar todas as tools (19 total)
 registerStatusTools(server);    // 2 tools: check_connection, get_my_info
 registerChatTools(server);      // 3 tools: list_chats, get_chat, search_chats
 registerMessageTools(server);   // 11 tools: list_messages, send_message, send_message_by_phone, get_unread_chats, read_unread_messages, resolve_chat, mark_as_read, mark_as_unread, download_media, transcribe_audio, get_audit_log
