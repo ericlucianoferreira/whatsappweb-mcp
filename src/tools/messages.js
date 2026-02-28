@@ -96,7 +96,7 @@ export function registerMessageTools(server) {
         return {
           content: [{
             type: "text",
-            text: `⚠️ Atenção: abrir este chat pode marcar mensagens como lidas.\n\n${formatted.length} mensagem(ns):\n\n${JSON.stringify(formatted, null, 2)}`
+            text: `${formatted.length} mensagem(ns):\n\n${JSON.stringify(formatted, null, 2)}`
           }],
         };
       } catch (err) {

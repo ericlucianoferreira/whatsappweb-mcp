@@ -71,16 +71,21 @@
   }
 
   function formatMessage(msg) {
-    return {
-      id: safeWid(msg.id),
-      from: safeWid(msg.from),
-      sender: msg.sender?.pushname || msg.sender?.name || "",
-      body: msg.body || "",
-      timestamp: msg.t || msg.timestamp,
-      fromMe: msg.id?.fromMe || false,
-      type: msg.type || "chat",
-      hasMedia: msg.isMedia || msg.isMMS || false,
-    };
+    if (!msg || typeof msg !== "object") return null;
+    try {
+      return {
+        id: safeWid(msg.id),
+        from: safeWid(msg.from),
+        sender: msg.sender?.pushname || msg.sender?.name || "",
+        body: msg.body || "",
+        timestamp: msg.t || msg.timestamp,
+        fromMe: msg.id?.fromMe || false,
+        type: msg.type || "chat",
+        hasMedia: msg.isMedia || msg.isMMS || false,
+      };
+    } catch {
+      return null;
+    }
   }
 
   function formatContact(contact) {
@@ -169,10 +174,30 @@
 
     GET_MESSAGES: async (payload) => {
       const limit = payload.limit || 30;
-      const msgs = await WPP.chat.getMessages(payload.chatId, {
-        count: limit,
-      });
-      return { messages: msgs.map(formatMessage) };
+      const chatId = payload.chatId;
+
+      // Tentar WPP.chat.getMessages primeiro
+      let msgs = null;
+      try {
+        const raw = await WPP.chat.getMessages(chatId, { count: limit });
+        if (Array.isArray(raw)) msgs = raw;
+        else if (raw?.models && Array.isArray(raw.models)) msgs = raw.models;
+        else if (typeof raw?.toArray === "function") msgs = raw.toArray();
+      } catch {}
+
+      // Fallback: buscar direto do MsgStore (mais robusto)
+      if (!msgs || msgs.length === 0) {
+        try {
+          const chat = WPP.whatsapp.ChatStore.get(chatId);
+          if (chat?.msgs?.models) {
+            msgs = chat.msgs.models.slice(-limit);
+          } else if (chat?.msgs?.toArray) {
+            msgs = chat.msgs.toArray().slice(-limit);
+          }
+        } catch {}
+      }
+
+      return { messages: (msgs || []).map(formatMessage).filter(Boolean) };
     },
 
     SEND_MESSAGE: async (payload) => {
@@ -194,7 +219,7 @@
         // Forçar carregamento das mensagens no store para garantir que a mensagem citada
         // esteja disponível — WPP.chat.sendTextMessage resolve o quotedMsg via getMessageById()
         // e falha silenciosamente se a mensagem não estiver no MsgStore
-        await WPP.chat.getMessages(chatId, { count: 50 });
+        try { await WPP.chat.getMessages(chatId, { count: 50 }); } catch {}
         opts.quotedMsg = payload.quotedMsgId;
       }
 
@@ -244,21 +269,23 @@
       const chatId = payload.chatId;
       const limit = payload.limit || 20;
 
+      // Helper para normalizar retorno do WA-JS (array ou MessageCollection)
+      const toArray = (raw) => Array.isArray(raw) ? raw : (raw?.models || raw?.toArray?.() || Object.values(raw) || []);
+
       // Tentar com onlyUnread=true (nem todas as versões do WA-JS suportam)
-      let msgs = await WPP.chat.getMessages(chatId, {
+      let msgs = toArray(await WPP.chat.getMessages(chatId, {
         count: limit,
         onlyUnread: true,
-      });
+      }));
 
       // Fallback: se retornou vazio mas o chat tem não lidas, buscar últimas N e filtrar
       if (!msgs || msgs.length === 0) {
         const chat = WPP.chat.get(chatId);
         const unreadCount = chat?.unreadCount || 0;
         if (unreadCount > 0) {
-          const allMsgs = await WPP.chat.getMessages(chatId, {
+          const allMsgs = toArray(await WPP.chat.getMessages(chatId, {
             count: Math.max(unreadCount + 5, limit),
-          });
-          // Pegar apenas as últimas unreadCount mensagens (que são as não lidas)
+          }));
           msgs = allMsgs.slice(-unreadCount);
         }
       }
