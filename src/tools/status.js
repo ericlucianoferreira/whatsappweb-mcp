@@ -9,7 +9,7 @@ export function registerStatusTools(server) {
     "Verifica se a extensão WhatsApp está conectada e o WhatsApp Web está autenticado.",
     {},
     async () => {
-      if (!isConnected()) {
+      if (!(await isConnected())) {
         return {
           content: [{
             type: "text",

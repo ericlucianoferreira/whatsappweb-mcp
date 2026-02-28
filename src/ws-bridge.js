@@ -360,14 +360,21 @@ export function sendCommand(type, payload = {}) {
     }, COMMAND_TIMEOUT);
 
     pendingRequests.set(id, { resolve, reject, timer });
-    extensionSocket.send(JSON.stringify({ id, type, payload }));
+
+    try {
+      extensionSocket.send(JSON.stringify({ id, type, payload }));
+    } catch (err) {
+      pendingRequests.delete(id);
+      clearTimeout(timer);
+      reject(new Error(`Falha ao enviar comando para a extensão: ${err.message}`));
+    }
   });
 }
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
-export function isConnected() {
-  if (usingDaemon) return isConnectedDaemon();
+export async function isConnected() {
+  if (usingDaemon) return await isConnectedDaemon();
   return extensionSocket !== null && extensionSocket.readyState === WebSocket.OPEN;
 }
 
