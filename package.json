@@ -5,7 +5,15 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "start-daemon": "pm2 start src/ws-daemon.js --name whatsapp-ws-daemon",
+    "stop-daemon": "pm2 stop whatsapp-ws-daemon",
+    "restart-daemon": "pm2 restart whatsapp-ws-daemon",
+    "daemon-status": "pm2 show whatsapp-ws-daemon",
+    "daemon-logs": "pm2 logs whatsapp-ws-daemon"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

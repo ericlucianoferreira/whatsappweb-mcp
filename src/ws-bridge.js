@@ -1,12 +1,75 @@
 // ─── WEBSOCKET BRIDGE ────────────────────────────────────────────────────────
-// Gerencia a conexão WebSocket entre o MCP server e a extensão Chrome/Edge.
-// Inclui: lock file (anti-conflito), probe de instância, shutdown gracioso.
+// Gerencia a conexão entre o MCP server e a extensão Chrome/Edge.
+//
+// Dois modos de operação:
+//
+// MODO DAEMON (recomendado — múltiplas sessões):
+//   Se ws-daemon.js estiver rodando (detectado via GET /health na porta 3848),
+//   este módulo funciona como cliente HTTP do daemon. Não sobe nenhum servidor
+//   WebSocket. Múltiplas sessões do Claude Code coexistem sem conflito.
+//
+// MODO STANDALONE (comportamento original):
+//   Se o daemon não estiver rodando, este módulo sobe seu próprio WebSocket
+//   server na porta 3847, exatamente como antes. Compatibilidade total.
+//
+// Para ativar o modo daemon:
+//   npm run start-daemon    (inicia via pm2)
+//   ou: node src/ws-daemon.js
 
 import { WebSocketServer, WebSocket } from "ws";
 import { WS_PORT, WS_PATH, PING_INTERVAL, COMMAND_TIMEOUT } from "./config.js";
 import fs from "fs";
 import os from "os";
 import path from "path";
+
+const DAEMON_HTTP_PORT = 3848;
+const DAEMON_URL       = `http://localhost:${DAEMON_HTTP_PORT}`;
+
+// ─── DETECÇÃO DO DAEMON ───────────────────────────────────────────────────────
+
+let usingDaemon = false;
+
+async function checkDaemon() {
+  try {
+    const res = await fetch(`${DAEMON_URL}/health`, { signal: AbortSignal.timeout(1000) });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.status === "ok") return true;
+    }
+  } catch {}
+  return false;
+}
+
+// ─── MODO DAEMON: SEND COMMAND VIA HTTP ──────────────────────────────────────
+
+async function sendCommandDaemon(type, payload = {}) {
+  let res;
+  try {
+    res = await fetch(`${DAEMON_URL}/command`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type, payload }),
+      signal: AbortSignal.timeout(COMMAND_TIMEOUT + 2000),
+    });
+  } catch (err) {
+    throw new Error(`Daemon não respondeu: ${err.message}`);
+  }
+
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  return body.result;
+}
+
+async function isConnectedDaemon() {
+  try {
+    const res = await fetch(`${DAEMON_URL}/health`, { signal: AbortSignal.timeout(1000) });
+    if (res.ok) {
+      const data = await res.json();
+      return data.extensionConnected === true;
+    }
+  } catch {}
+  return false;
+}
 
 // ─── ESTADO ──────────────────────────────────────────────────────────────────
 
@@ -57,7 +120,9 @@ function isProcessAlive(pid) {
   try {
     process.kill(pid, 0); // signal 0 = só verifica se existe
     return true;
-  } catch {
+  } catch (err) {
+    // No Windows, EPERM significa processo existe mas sem permissão de sinal — tratar como vivo
+    if (err.code === "EPERM") return true;
     return false; // ESRCH = processo não existe
   }
 }
@@ -120,19 +185,34 @@ function probeExistingServer() {
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 3000;
 
-export function startServer(retryCount = 0) {
-  return new Promise(async (resolve) => {
-    // 1. Verificar lock file antes de tentar bind
-    const lock = readLock();
-    if (lock && lock.pid !== process.pid && isProcessAlive(lock.pid)) {
+export async function startServer(retryCount = 0) {
+  // Verificar se o daemon está rodando antes de tentar subir standalone
+  const daemonRunning = await checkDaemon();
+  if (daemonRunning) {
+    usingDaemon = true;
+    console.error(`[WS Bridge] Modo DAEMON ativo — conectado ao daemon em ${DAEMON_URL}`);
+    console.error(`[WS Bridge] Múltiplas sessões do Claude Code são suportadas.`);
+    return null;
+  }
+
+  // 1. Verificar lock file antes de tentar bind
+  const lock = readLock();
+  if (lock && lock.pid !== process.pid && isProcessAlive(lock.pid)) {
+    // PID está vivo — mas pode ser PID reutilizado por outro processo.
+    // Confirmar com probe antes de desistir.
+    const isRealSibling = await probeExistingServer();
+    if (isRealSibling) {
       console.error(`[WS Bridge] Instância ativa detectada (PID ${lock.pid}).`);
       console.error(`[WS Bridge] Este processo funcionará sem WebSocket.`);
       console.error(`[WS Bridge] Feche outras janelas do Claude Code para usar o WhatsApp nesta sessão.`);
-      resolve(null);
-      return;
+      return null;
     }
+    // Probe falhou — lock stale com PID reutilizado, ignorar e tentar bind
+    console.error(`[WS Bridge] Lock stale (PID ${lock.pid} pertence a outro processo). Assumindo porta livre.`);
+  }
 
-    // 2. Lock stale ou inexistente — tentar bind
+  // 2. Lock stale ou inexistente — tentar bind
+  return new Promise((resolve) => {
     try {
       wss = new WebSocketServer({ port: WS_PORT, path: WS_PATH });
     } catch (err) {
@@ -148,7 +228,7 @@ export function startServer(retryCount = 0) {
       resolve(wss);
     });
 
-    wss.on("error", async (err) => {
+    wss.on("error", (err) => {
       if (err.code !== "EADDRINUSE") {
         console.error(`[WS Bridge] Erro no servidor: ${err.message}`);
         wss = null;
@@ -159,26 +239,26 @@ export function startServer(retryCount = 0) {
       console.error(`[WS Bridge] Porta ${WS_PORT} em uso — verificando...`);
 
       // 3. Probe: é instância viva ou processo morto?
-      const isLiveSibling = await probeExistingServer();
-
-      if (isLiveSibling) {
-        console.error(`[WS Bridge] Instância irmã ativa na porta ${WS_PORT}.`);
-        console.error(`[WS Bridge] Este processo funcionará sem WebSocket.`);
-        wss = null;
-        resolve(null);
-      } else if (retryCount < MAX_RETRIES) {
-        // Porta presa por TIME_WAIT ou processo morto — aguardar e tentar de novo
-        console.error(`[WS Bridge] Porta provavelmente em TIME_WAIT. Retry ${retryCount + 1}/${MAX_RETRIES} em ${RETRY_DELAY / 1000}s...`);
-        wss = null;
-        setTimeout(() => {
-          startServer(retryCount + 1).then(resolve);
-        }, RETRY_DELAY);
-      } else {
-        console.error(`[WS Bridge] Não foi possível obter a porta ${WS_PORT} após ${MAX_RETRIES} tentativas.`);
-        console.error(`[WS Bridge] Para resolver: feche outros terminais do Claude Code ou mate o processo na porta ${WS_PORT}.`);
-        wss = null;
-        resolve(null);
-      }
+      probeExistingServer().then((isLiveSibling) => {
+        if (isLiveSibling) {
+          console.error(`[WS Bridge] Instância irmã ativa na porta ${WS_PORT}.`);
+          console.error(`[WS Bridge] Este processo funcionará sem WebSocket.`);
+          wss = null;
+          resolve(null);
+        } else if (retryCount < MAX_RETRIES) {
+          // Porta presa por TIME_WAIT ou processo morto — aguardar e tentar de novo
+          console.error(`[WS Bridge] Porta provavelmente em TIME_WAIT. Retry ${retryCount + 1}/${MAX_RETRIES} em ${RETRY_DELAY / 1000}s...`);
+          wss = null;
+          setTimeout(() => {
+            startServer(retryCount + 1).then(resolve);
+          }, RETRY_DELAY);
+        } else {
+          console.error(`[WS Bridge] Não foi possível obter a porta ${WS_PORT} após ${MAX_RETRIES} tentativas.`);
+          console.error(`[WS Bridge] Para resolver: feche outros terminais do Claude Code ou mate o processo na porta ${WS_PORT}.`);
+          wss = null;
+          resolve(null);
+        }
+      });
     });
   });
 }
@@ -257,6 +337,10 @@ function handleMessage(msg, ws) {
 // ─── SEND COMMAND ────────────────────────────────────────────────────────────
 
 export function sendCommand(type, payload = {}) {
+  // Modo daemon: delegar para HTTP
+  if (usingDaemon) return sendCommandDaemon(type, payload);
+
+  // Modo standalone: WebSocket direto (comportamento original)
   return new Promise((resolve, reject) => {
     if (!extensionSocket || extensionSocket.readyState !== WebSocket.OPEN) {
       reject(new Error(
@@ -283,6 +367,7 @@ export function sendCommand(type, payload = {}) {
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
 export function isConnected() {
+  if (usingDaemon) return isConnectedDaemon();
   return extensionSocket !== null && extensionSocket.readyState === WebSocket.OPEN;
 }
 
@@ -299,6 +384,9 @@ function rejectAllPending(reason) {
 // Isso libera a porta MUITO mais rápido que wss.close() sozinho.
 
 export function stopServer() {
+  // Modo daemon: não encerrar o daemon ao fechar o MCP — ele é independente
+  if (usingDaemon) return Promise.resolve();
+
   clearInterval(pingTimer);
   rejectAllPending("Servidor encerrando");
 

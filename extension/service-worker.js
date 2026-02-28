@@ -16,8 +16,11 @@ let reconnectTimer = null;
 let isConnecting = false;
 
 // ─── KEEP-ALIVE (Manifest V3) ──────────────────────────────────────────────
-// chrome.alarms é mais confiável que setInterval em Manifest V3
-// Service workers morrem após 30s de inatividade — alarm a cada ~24s mantém vivo
+// Duas camadas de keepalive:
+// 1. chrome.alarms a cada ~24s (já existente) — verifica e reconecta se necessário
+// 2. Offscreen Document — envia mensagem a cada 25s mantendo o SW acordado
+//    mesmo quando a janela do Edge está minimizada ou em background.
+//    Isso resolve o problema de conexão cair ao mover/minimizar o Edge.
 
 chrome.alarms.create("keep-alive", { periodInMinutes: 0.4 });
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -25,8 +28,49 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       connectWebSocket();
     }
+    // Garantir que o offscreen document ainda está ativo
+    ensureOffscreenDocument();
   }
 });
+
+// ─── OFFSCREEN DOCUMENT ──────────────────────────────────────────────────────
+// Documento HTML oculto que sobrevive à suspensão do service worker.
+// Envia mensagem keepalive periódica para manter este SW ativo.
+//
+// Promise compartilhada para serializar chamadas concorrentes (init + alarm).
+// Evita race condition onde dois createDocument() chegam em paralelo.
+
+let offscreenInitPromise = null;
+
+function ensureOffscreenDocument() {
+  if (offscreenInitPromise) return offscreenInitPromise;
+
+  offscreenInitPromise = (async () => {
+    try {
+      const contexts = await chrome.runtime.getContexts({
+        contextTypes: ["OFFSCREEN_DOCUMENT"],
+      });
+      if (contexts.length === 0) {
+        await chrome.offscreen.createDocument({
+          url: "offscreen.html",
+          reasons: ["WORKERS"],
+          justification: "Manter service worker ativo para conexão WebSocket com MCP server",
+        });
+      }
+    } catch (err) {
+      // Offscreen API pode não estar disponível em versões antigas do Chrome
+      console.warn("[SW] Offscreen document não disponível:", err.message);
+    } finally {
+      // Liberar para próxima chamada verificar novamente (documento pode ter fechado)
+      offscreenInitPromise = null;
+    }
+  })();
+
+  return offscreenInitPromise;
+}
+
+// Criar o offscreen document na inicialização
+ensureOffscreenDocument();
 
 // ─── WEBSOCKET ───────────────────────────────────────────────────────────────
 
@@ -48,6 +92,7 @@ function connectWebSocket() {
     isConnecting = false;
     reconnectAttempt = 0; // Reset backoff on success
     clearTimeout(reconnectTimer);
+    reconnectTimer = null;
     updateStatus("ws_connected", true);
 
     // Keep-alive ping
@@ -146,12 +191,23 @@ async function updateStatus(key, value) {
 // ─── MENSAGENS DO POPUP ──────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Keepalive enviado pelo offscreen document a cada 25s
+  // Apenas receber a mensagem já é suficiente para resetar o idle timer do SW
+  if (msg.type === "keepalive") {
+    sendResponse({ ok: true });
+    return true;
+  }
+
   if (msg.action === "reconnect") {
     reconnectAttempt = 0; // Reset backoff on manual reconnect
+    // Limpar timer pendente antes de forçar reconexão
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
     if (ws) {
       ws.close();
+    } else {
+      setTimeout(connectWebSocket, 500);
     }
-    setTimeout(connectWebSocket, 500);
     sendResponse({ ok: true });
   }
   return true;
