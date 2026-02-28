@@ -11,4 +11,5 @@ export const SEND_DELAY_MAX = 2500;
 export const PING_INTERVAL = 20_000;
 
 // Timeout para aguardar resposta da extensão (ms)
-export const COMMAND_TIMEOUT = 15_000;
+// 30s para dar margem ao DOWNLOAD_MEDIA + Whisper medium
+export const COMMAND_TIMEOUT = 30_000;

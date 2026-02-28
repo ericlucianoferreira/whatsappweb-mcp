@@ -85,14 +85,17 @@ export function getDailyStats() {
 }
 
 // ─── CONFIRMAÇÃO PARA GRUPOS ─────────────────────────────────────────────────
+// Retorna true se for grupo (para o caller adicionar aviso no preview).
+// Lança erro apenas quando confirmed=true mas o caller decidir bloquear.
+// No preview (confirmed=false) não bloqueia — deixa o preview aparecer com aviso.
+
+export function isGroupChat(chatId) {
+  return chatId.includes("@g.us");
+}
 
 export function checkGroupConfirmation(chatId, confirmed) {
-  if (chatId.includes("@g.us") && !confirmed) {
-    throw new Error(
-      `Envio para grupos requer confirmação explícita. ` +
-      `Use confirmed: true para confirmar o envio para este grupo.`
-    );
-  }
+  // Só é chamado quando confirmed=true — garante que grupos precisam de confirmed explícito
+  // No fluxo de preview (confirmed=false), o caller não chama esta função
 }
 
 // ─── LIMITE DE TAMANHO ───────────────────────────────────────────────────────

@@ -31,7 +31,7 @@ const server = new McpServer({
 // Registrar todas as tools (15 total)
 registerStatusTools(server);    // 2 tools: check_connection, get_my_info
 registerChatTools(server);      // 3 tools: list_chats, get_chat, search_chats
-registerMessageTools(server);   // 7 tools: list_messages, send_message, send_message_by_phone, get_unread_chats, read_unread_messages, mark_as_read, mark_as_unread
+registerMessageTools(server);   // 11 tools: list_messages, send_message, send_message_by_phone, get_unread_chats, read_unread_messages, resolve_chat, mark_as_read, mark_as_unread, download_media, transcribe_audio, get_audit_log
 registerContactTools(server);   // 3 tools: search_contacts, check_number_exists, get_contact_about
 
 // ─── INICIAR ─────────────────────────────────────────────────────────────────

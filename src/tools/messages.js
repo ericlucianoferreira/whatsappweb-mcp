@@ -9,7 +9,7 @@ import { execFile } from "child_process";
 import {
   checkRateLimit,
   checkDailyRecipientLimit,
-  checkGroupConfirmation,
+  isGroupChat,
   checkMessageLength,
   checkAntiLoop,
   checkSensitiveContent,
@@ -126,7 +126,8 @@ export function registerMessageTools(server) {
         // Validações que rodam sempre (antes do preview)
         checkMessageLength(message, confirmed);
         checkSensitiveContent(message, confirmed);
-        checkGroupConfirmation(chat_id, confirmed);
+
+        const isGroup = isGroupChat(chat_id);
 
         // PREVIEW — se não confirmado, mostrar e parar
         if (!confirmed) {
@@ -134,7 +135,7 @@ export function registerMessageTools(server) {
             content: [{
               type: "text",
               text: `📋 PREVIEW — mensagem NÃO enviada ainda.\n\n` +
-                `Para: ${chat_id}\n` +
+                `Para: ${chat_id}${isGroup ? " ⚠️ GRUPO" : ""}\n` +
                 (reply_to_msg_id ? `Respondendo: ${reply_to_msg_id}\n` : "") +
                 `Mensagem:\n"${message}"\n\n` +
                 `Para enviar, chame novamente com confirmed: true.\n` +
@@ -194,7 +195,6 @@ export function registerMessageTools(server) {
 
         checkMessageLength(message, confirmed);
         checkSensitiveContent(message, confirmed);
-        checkGroupConfirmation(chatId, confirmed);
 
         if (!confirmed) {
           return {
@@ -352,7 +352,8 @@ export function registerMessageTools(server) {
           if (!message) throw new Error("Mensagem obrigatória para action='reply'.");
           checkMessageLength(message, confirmed);
           checkSensitiveContent(message, confirmed);
-          checkGroupConfirmation(chat_id, confirmed);
+
+          const isGroup = isGroupChat(chat_id);
 
           // Preview se não confirmado
           if (!confirmed) {
@@ -360,7 +361,7 @@ export function registerMessageTools(server) {
               content: [{
                 type: "text",
                 text: `📋 PREVIEW — resposta NÃO enviada ainda.\n\n` +
-                  `Para: ${chat_id}\n` +
+                  `Para: ${chat_id}${isGroup ? " ⚠️ GRUPO" : ""}\n` +
                   (reply_to_msg_id ? `Respondendo: ${reply_to_msg_id}\n` : "") +
                   `Mensagem:\n"${message}"\n\n` +
                   `Para enviar, chame novamente com confirmed: true.\n` +

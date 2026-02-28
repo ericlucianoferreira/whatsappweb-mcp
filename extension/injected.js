@@ -53,16 +53,18 @@
   }
 
   function formatChat(chat) {
+    // WA-JS expõe a última mensagem em múltiplos lugares dependendo da versão
+    const lastMsg = chat.lastMessage || chat.msgs?.last || chat.msgs?.models?.[chat.msgs?.models?.length - 1] || null;
     return {
       id: safeWid(chat.id),
       name: chat.name || chat.contact?.name || chat.contact?.pushname || "",
       isGroup: chat.isGroup || false,
       unreadCount: chat.unreadCount || 0,
-      lastMessage: chat.lastMessage
+      lastMessage: lastMsg
         ? {
-            body: chat.lastMessage.body || "",
-            timestamp: chat.lastMessage.t || chat.lastMessage.timestamp,
-            fromMe: chat.lastMessage.id?.fromMe || false,
+            body: lastMsg.body || lastMsg.caption || "",
+            timestamp: lastMsg.t || lastMsg.timestamp,
+            fromMe: lastMsg.id?.fromMe || lastMsg.fromMe || false,
           }
         : null,
     };
@@ -234,17 +236,34 @@
 
     GET_UNREAD: async () => {
       const unreadChats = await WPP.chat.list({ onlyWithUnreadMessage: true });
-      const result = unreadChats.slice(0, 20).map(formatChat);
+      const result = unreadChats.slice(0, 50).map(formatChat);
       return { chats: result };
     },
 
     GET_UNREAD_DETAIL: async (payload) => {
       const chatId = payload.chatId;
-      const msgs = await WPP.chat.getMessages(chatId, {
-        count: payload.limit || 20,
+      const limit = payload.limit || 20;
+
+      // Tentar com onlyUnread=true (nem todas as versões do WA-JS suportam)
+      let msgs = await WPP.chat.getMessages(chatId, {
+        count: limit,
         onlyUnread: true,
       });
-      return { messages: msgs.map(formatMessage) };
+
+      // Fallback: se retornou vazio mas o chat tem não lidas, buscar últimas N e filtrar
+      if (!msgs || msgs.length === 0) {
+        const chat = WPP.chat.get(chatId);
+        const unreadCount = chat?.unreadCount || 0;
+        if (unreadCount > 0) {
+          const allMsgs = await WPP.chat.getMessages(chatId, {
+            count: Math.max(unreadCount + 5, limit),
+          });
+          // Pegar apenas as últimas unreadCount mensagens (que são as não lidas)
+          msgs = allMsgs.slice(-unreadCount);
+        }
+      }
+
+      return { messages: (msgs || []).map(formatMessage) };
     },
 
     MARK_AS_READ: async (payload) => {
