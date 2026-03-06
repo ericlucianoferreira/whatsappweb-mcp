@@ -312,6 +312,27 @@
       return { success: true };
     },
 
+    SEND_FILE: async (payload) => {
+      const { chatId, base64Data, mimetype, filename, caption } = payload;
+      if (!chatId) throw new Error("chatId é obrigatório");
+      if (!base64Data) throw new Error("base64Data é obrigatório");
+
+      const normalizedId = normalizeChatId(chatId);
+      await new Promise((r) => setTimeout(r, randomDelay()));
+      await WPP.chat.openChatBottom(normalizedId);
+      await new Promise((r) => setTimeout(r, 400));
+
+      const dataUrl = `data:${mimetype || "application/octet-stream"};base64,${base64Data}`;
+      const result = await WPP.chat.sendFileMessage(normalizedId, dataUrl, {
+        type: "auto-detect",
+        mimetype: mimetype || "application/octet-stream",
+        filename: filename || "file",
+        caption: caption || "",
+      });
+
+      return { sent: true, id: safeWid(result?.id) || "" };
+    },
+
     DOWNLOAD_MEDIA: async (payload) => {
       const { msgId, chatId } = payload;
 

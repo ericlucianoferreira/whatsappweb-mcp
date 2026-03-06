@@ -454,6 +454,94 @@ export function registerMessageTools(server) {
     }
   );
 
+  // ─── send_file ────────────────────────────────────────────────────────────
+  server.tool(
+    "whatsapp_send_file",
+    "Envia um arquivo (imagem, documento, PDF, etc.) pelo WhatsApp pessoal do Eric. " +
+    "Lê o arquivo do disco local, converte para base64 e envia via WA-JS. " +
+    "Limite recomendado: ~15MB (limitação do WhatsApp). " +
+    "confirmed=false (padrão) = preview. confirmed=true = enviar.",
+    {
+      chat_id: z.string().describe("ID do chat destino (ex: 5511999999999@c.us)"),
+      file_path: z.string().describe("Caminho absoluto do arquivo local (ex: C:/Users/.../foto.png)"),
+      caption: z.string().optional().default("").describe("Legenda opcional do arquivo"),
+      confirmed: zBool(false).describe("false = preview, true = enviar"),
+    },
+    async ({ chat_id, file_path: filePath, caption, confirmed }) => {
+      try {
+        if (!fs.existsSync(filePath)) {
+          throw new Error(`Arquivo não encontrado: ${filePath}`);
+        }
+
+        const stats = fs.statSync(filePath);
+        const sizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+        const filename = path.basename(filePath);
+
+        const extMap = {
+          ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+          ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+          ".pdf": "application/pdf", ".doc": "application/msword",
+          ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          ".xls": "application/vnd.ms-excel",
+          ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          ".mp4": "video/mp4", ".mp3": "audio/mpeg", ".ogg": "audio/ogg",
+          ".zip": "application/zip", ".txt": "text/plain", ".csv": "text/csv",
+        };
+        const ext = path.extname(filePath).toLowerCase();
+        const mimetype = extMap[ext] || "application/octet-stream";
+
+        if (stats.size > 16 * 1024 * 1024) {
+          throw new Error(`Arquivo muito grande (${sizeMB}MB). Limite do WhatsApp: ~16MB.`);
+        }
+
+        const isGroup = isGroupChat(chat_id);
+
+        if (!confirmed) {
+          return {
+            content: [{
+              type: "text",
+              text: `📋 PREVIEW — arquivo NÃO enviado ainda.\n\n` +
+                `Para: ${chat_id}${isGroup ? " ⚠️ GRUPO" : ""}\n` +
+                `Arquivo: ${filename} (${sizeMB}MB)\n` +
+                `Tipo: ${mimetype}\n` +
+                (caption ? `Legenda: "${caption}"\n` : "") +
+                `\nPara enviar, chame novamente com confirmed: true.`
+            }],
+          };
+        }
+
+        checkRateLimit();
+        checkDailyRecipientLimit(chat_id);
+
+        const fileBuffer = fs.readFileSync(filePath);
+        const base64Data = fileBuffer.toString("base64");
+
+        logAudit({ action: "send_file_pending", chat_id, filename, sizeMB, mimetype });
+
+        const result = await sendCommand("SEND_FILE", {
+          chatId: chat_id,
+          base64Data,
+          mimetype,
+          filename,
+          caption: caption || "",
+        });
+
+        logAudit({ action: "send_file", chat_id, filename, sizeMB, mimetype, message_id: result.id || "" });
+
+        const dStats = getDailyStats();
+        return {
+          content: [{
+            type: "text",
+            text: `Arquivo enviado: ${filename} (${sizeMB}MB)${result.id ? ` ID: ${result.id}` : ""}\n` +
+              `Destinatários hoje: ${dStats.uniqueRecipients}/${dStats.maxRecipients}`
+          }],
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Erro ao enviar arquivo: ${err.message}` }] };
+      }
+    }
+  );
+
   // ─── download_media ────────────────────────────────────────────────────────
   server.tool(
     "whatsapp_download_media",

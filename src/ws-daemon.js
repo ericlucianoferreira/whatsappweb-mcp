@@ -19,7 +19,7 @@ import path from "path";
 const DAEMON_HTTP_PORT = 3848;
 const IDENTITY_TOKEN   = "whatsapp-mcp-v1";
 const LOCK_FILE        = path.join(os.tmpdir(), "whatsapp-mcp-daemon.lock");
-const MAX_BODY_BYTES   = 64 * 1024; // 64KB — proteção contra DoS local
+const MAX_BODY_BYTES   = 20 * 1024 * 1024; // 20MB — suporta envio de arquivos em base64
 
 // ─── ESTADO ──────────────────────────────────────────────────────────────────
 
