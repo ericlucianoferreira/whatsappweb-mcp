@@ -1,4 +1,22 @@
 node_modules/
-*.log
 .env
+*.log
+
+# Dados gerados
 whatsapp-session.json
+
+# Backups de maquina
+*-ERICLUCIANO-PC*
+*-*-PC.*
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Claude
+.claude/
