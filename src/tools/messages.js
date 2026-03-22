@@ -159,6 +159,9 @@ export function registerMessageTools(server) {
           ...(reply_to_msg_id ? { quotedMsgId: reply_to_msg_id } : {}),
         });
 
+        // Deselecionar chat para evitar que respostas sejam marcadas como lidas automaticamente
+        try { await sendCommand("DESELECT_CHAT", {}); } catch {}
+
         logAudit({ action: "send_message", chat_id, length: message.length, message_id: result.id || "", reply_to: reply_to_msg_id || null });
 
         const stats = getDailyStats();
@@ -222,6 +225,9 @@ export function registerMessageTools(server) {
           text: message,
           ...(reply_to_msg_id ? { quotedMsgId: reply_to_msg_id } : {}),
         });
+
+        // Deselecionar chat para evitar que respostas sejam marcadas como lidas automaticamente
+        try { await sendCommand("DESELECT_CHAT", {}); } catch {}
 
         logAudit({ action: "send_message_by_phone", chat_id: chatId, phone: phone_number, length: message.length, message_id: result.id || "" });
 

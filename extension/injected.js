@@ -118,6 +118,11 @@
   // ─── COMMAND HANDLERS ────────────────────────────────────────────────────────
 
   const handlers = {
+    DESELECT_CHAT: async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", keyCode: 27, bubbles: true }));
+      return { success: true };
+    },
+
     IS_AUTHENTICATED: async () => {
       try {
         const authenticated = WPP.conn.isAuthenticated();
