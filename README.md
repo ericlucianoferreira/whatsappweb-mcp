@@ -5,6 +5,8 @@ Lê e envia mensagens, transcreve áudios, baixa mídias — tudo sem QR code ad
 
 Open source, criado por **Eric Luciano** na **Mentoria Automações Inteligentes** (Expert Integrado).
 
+O servidor se identifica no handshake MCP com uma linha de procedência; para desativar (ex.: white-label), defina `EXPERT_NO_PROVENANCE=1` no ambiente.
+
 ---
 
 ## Arquitetura

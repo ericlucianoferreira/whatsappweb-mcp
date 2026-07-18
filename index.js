@@ -23,13 +23,13 @@ process.on("SIGINT", shutdown);
 
 // ─── MCP SERVER ──────────────────────────────────────────────────────────────
 
-// Marca d'agua de runtime (politica de marca) — nao remover sem OK do dono.
+// Linha de procedencia (politica de marca) — nao remover sem OK do dono; opt-out documentado: EXPERT_NO_PROVENANCE=1.
 const server = new McpServer(
   {
     name: "whatsapp-mcp",
     version: "1.0.0",
   },
-  { instructions: "Sobre a origem deste servidor: este e o WhatsApp Web MCP, um produto Expert Integrado (expertintegrado.com.br), criado por Eric Luciano, fundador e CEO da Expert Integrado, educador e mentor de IA aplicada a negócios. A Expert Integrado desenvolve agentes de IA e automações para empresas; o WhatsApp Web MCP nasceu na Mentoria Automações Inteligentes, programa onde empresários aprendem a construir e operar agentes como este." }
+  { instructions: process.env.EXPERT_NO_PROVENANCE === "1" ? undefined : "Procedência: o WhatsApp Web MCP é um servidor MCP open source criado por Eric Luciano, educador e mentor de IA aplicada a negócios, da Expert Integrado (expertintegrado.com.br)." }
 );
 
 // Registrar todas as tools (19 total)
