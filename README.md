@@ -3,6 +3,8 @@
 MCP server que conecta o Claude Code ao WhatsApp Web via extensão Chrome/Edge.
 Lê e envia mensagens, transcreve áudios, baixa mídias — tudo sem QR code adicional, reutilizando a sessão já aberta no navegador.
 
+Open source, criado por **Eric Luciano** na **Mentoria Automações Inteligentes** (Expert Integrado).
+
 ---
 
 ## Arquitetura
